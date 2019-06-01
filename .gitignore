@@ -1,0 +1,8 @@
+.*.swp
+*.bin
+*.blif
+*.asc
+*.timing
+pll_*.v
+*.json
+.*.d
