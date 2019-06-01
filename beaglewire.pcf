@@ -6,66 +6,101 @@
 #         date: 2017-04-18
 
 # USER CLOCK
-set_io clk_100mhz 61
+set_io -nowarn clk_100mhz 61
 
 # LED
-set_io led[0] 28
-set_io led[1] 29
-set_io led[2] 31
-set_io led[3] 32
+set_io -nowarn led[0] 28
+set_io -nowarn led[1] 29
+set_io -nowarn led[2] 31
+set_io -nowarn led[3] 32
 
 #GPMC
-set_io gpmc_ad[0] 134
-set_io gpmc_ad[1] 136
-set_io gpmc_ad[2] 21
-set_io gpmc_ad[3] 22
-set_io gpmc_ad[4] 135
-set_io gpmc_ad[5] 138
-set_io gpmc_ad[6] 23
-set_io gpmc_ad[7] 24
-set_io gpmc_ad[8] 139
-set_io gpmc_ad[9] 2
-set_io gpmc_ad[10] 1
-set_io gpmc_ad[11] 141
-set_io gpmc_ad[12] 16
-set_io gpmc_ad[13] 3
-set_io gpmc_ad[14] 144
-set_io gpmc_ad[15] 143
+set_io -nowarn gpmc_ad[0] 134
+set_io -nowarn gpmc_ad[1] 136
+set_io -nowarn gpmc_ad[2] 21
+set_io -nowarn gpmc_ad[3] 22
+set_io -nowarn gpmc_ad[4] 135
+set_io -nowarn gpmc_ad[5] 138
+set_io -nowarn gpmc_ad[6] 23
+set_io -nowarn gpmc_ad[7] 24
+set_io -nowarn gpmc_ad[8] 139
+set_io -nowarn gpmc_ad[9] 2
+set_io -nowarn gpmc_ad[10] 1
+set_io -nowarn gpmc_ad[11] 141
+set_io -nowarn gpmc_ad[12] 16
+set_io -nowarn gpmc_ad[13] 3
+set_io -nowarn gpmc_ad[14] 144
+set_io -nowarn gpmc_ad[15] 143
 
-set_io gpmc_advn 19
-set_io gpmc_csn1 137
-set_io gpmc_clk 142
-set_io gpmc_wein 18
-set_io gpmc_oen 20
+set_io -nowarn gpmc_advn 19
+set_io -nowarn gpmc_csn1 137
+set_io -nowarn gpmc_clk 142
+set_io -nowarn gpmc_wein 18
+set_io -nowarn gpmc_oen 20
 
 # BUTTON
-set_io btn[0] 25
-set_io btn[1] 26
+set_io -nowarn btn[0] 25
+set_io -nowarn btn[1] 26
 
 # PMOD
-set_io pmod1_0 38
-set_io pmod1_1 37
-set_io pmod1_2 41
-set_io pmod1_3 39
-set_io pmod1_4 43
-set_io pmod1_5 42
-set_io pmod1_6 45
-set_io pmod1_7 44
+set_io -nowarn pmod1_0 38
+set_io -nowarn pmod1_1 37
+set_io -nowarn pmod1_2 41
+set_io -nowarn pmod1_3 39
+set_io -nowarn pmod1_4 43
+set_io -nowarn pmod1_5 42
+set_io -nowarn pmod1_6 45
+set_io -nowarn pmod1_7 44
 
-set_io pmod1[0] 38
-set_io pmod1[1] 37
-set_io pmod1[2] 41
-set_io pmod1[3] 39
-set_io pmod1[4] 43
-set_io pmod1[5] 42
-set_io pmod1[6] 45
-set_io pmod1[7] 44
+set_io -nowarn pmod1[0] 38
+set_io -nowarn pmod1[1] 37
+set_io -nowarn pmod1[2] 41
+set_io -nowarn pmod1[3] 39
+set_io -nowarn pmod1[4] 43
+set_io -nowarn pmod1[5] 42
+set_io -nowarn pmod1[6] 45
+set_io -nowarn pmod1[7] 44
 
-set_io pmod2[0] 48
-set_io pmod2[1] 47
-set_io pmod2[2] 52
-set_io pmod2[3] 49
-set_io pmod2[4] 56
-set_io pmod2[5] 55
-set_io pmod2[6] 62
-set_io pmod2[7] 60
+set_io -nowarn pmod2[0] 48
+set_io -nowarn pmod2[1] 47
+set_io -nowarn pmod2[2] 52
+set_io -nowarn pmod2[3] 49
+set_io -nowarn pmod2[4] 56
+set_io -nowarn pmod2[5] 55
+set_io -nowarn pmod2[6] 62
+set_io -nowarn pmod2[7] 60
+
+# SDRAM physical interface
+set_io -nowarn sdram_addr[0] 118
+set_io -nowarn sdram_addr[1] 117
+set_io -nowarn sdram_addr[2] 116
+set_io -nowarn sdram_addr[3] 101
+set_io -nowarn sdram_addr[4] 81
+set_io -nowarn sdram_addr[5] 83
+set_io -nowarn sdram_addr[6] 90
+set_io -nowarn sdram_addr[7] 91
+set_io -nowarn sdram_addr[8] 82
+set_io -nowarn sdram_addr[9] 84
+set_io -nowarn sdram_addr[10] 119
+set_io -nowarn sdram_addr[11] 85
+set_io -nowarn sdram_addr[12] 87
+
+set_io -nowarn sdram_data[0] 96
+set_io -nowarn sdram_data[1] 97
+set_io -nowarn sdram_data[2] 98
+set_io -nowarn sdram_data[3] 99
+set_io -nowarn sdram_data[4] 95
+set_io -nowarn sdram_data[5] 80
+set_io -nowarn sdram_data[6] 79
+set_io -nowarn sdram_data[7] 78
+
+set_io -nowarn sdram_bank[0] 121
+set_io -nowarn sdram_bank[1] 120
+
+set_io -nowarn sdram_clk 93
+set_io -nowarn sdram_cke 88
+set_io -nowarn sdram_we 128
+set_io -nowarn sdram_cs 122
+set_io -nowarn sdram_dqm 94
+set_io -nowarn sdram_ras 124
+set_io -nowarn sdram_cas 125
