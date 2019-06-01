@@ -4,6 +4,7 @@
  * This configures the serial port at 3 Mb/s for test output
  *
  */
+`default_nettype none
 `include "util.v"
 `include "uart.v"
 `include "gpio.v"
@@ -35,7 +36,7 @@ module top(
 	wire [7:0] sd_rd_data;
 	reg [7:0] sd_wr_data;
 	reg sd_wr_enable;
-	reg sd_rd_enable;
+	reg sd_rd_enable = 0;
 	wire sd_busy;
 	wire sd_rd_ready;
 	assign sdram_clk = clk_120mhz;
@@ -93,6 +94,9 @@ module top(
 	reg [7:0] uart_txd;
 	reg uart_txd_strobe;
 
+	// where the writer is wrapping
+	reg [24:0] wr_addr = 0;
+
 	reg [28:0] counter;
 	always @(posedge clk_120mhz)
 	begin
@@ -110,7 +114,7 @@ module top(
 			uart_txd <= "A" + counter[28:25];
 			uart_txd_strobe <= 1;
 		end else
-		if (!sdram_busy && !sd_wr_enable) begin
+		if (!sd_busy && !sd_wr_enable) begin
 			// write something to it!
 			sd_addr <= wr_addr;
 			sd_wr_data <= wr_addr ^ 8'h55;
