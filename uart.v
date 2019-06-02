@@ -1,3 +1,7 @@
+`ifndef _uart_v_
+`define _uart_v_
+`include "util.v"
+
  /*
   * uart.v - High-speed serial support. Includes a baud generator, UART,
   *            and a simple RFC1662-inspired packet framing protocol.
@@ -227,3 +231,6 @@ module uart_tx_fifo(
 		end
 	end
 endmodule
+
+
+`endif
