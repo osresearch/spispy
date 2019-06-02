@@ -27,9 +27,10 @@ module top(
 	output sdram_ras,
 	output sdram_cas
 );
-	wire locked, clk_120mhz;
+	wire locked, clk_120mhz, clk;
 	wire reset = !locked;
 	pll_120 pll(clk_100mhz, clk_120mhz, locked);
+	always @(posedge clk_120mhz) clk <= !clk;
 
 	// sdram logical interface
 	reg [24:0] sd_wr_addr = 0;
@@ -42,10 +43,10 @@ module top(
 	wire sd_rd_ready;
 
 	wire sd_busy;
-	assign sdram_clk = clk_120mhz;
+	assign sdram_clk = clk;
 
 	sdram_controller sdram(
-		.clk(clk_120mhz),
+		.clk(clk),
 		.rst_n(!reset),
 
 		// physical interface
@@ -89,18 +90,17 @@ module top(
 	// generate a 3 MHz/12 MHz serial clock from the 100 MHz clock
 	// this is the 3 Mb/s maximum supported by the FTDI chip
 	wire clk_3mhz, clk_12mhz;
-	divide_by_n #(.N(10)) div1(clk_120mhz, reset, clk_12mhz);
-	divide_by_n #(.N(40)) div4(clk_120mhz, reset, clk_3mhz);
+	divide_by_n #(.N(5)) div1(clk, reset, clk_12mhz);
+	divide_by_n #(.N(20)) div4(clk, reset, clk_3mhz);
 
 	wire [7:0] uart_rxd;
 	wire uart_rxd_strobe;
 	reg [7:0] uart_txd;
 	reg uart_txd_strobe;
-	wire uart_txd_ready;
 	reg read_start = 0; // have we received a full address from the
 
 	reg [28:0] counter;
-	always @(posedge clk_120mhz)
+	always @(posedge clk)
 	begin
 		counter <= counter + 1;
 		uart_txd_strobe <= 0;
@@ -113,7 +113,7 @@ module top(
 			// build up an address to read
 
 			if (uart_rxd == "\n") begin
-				//uart_txd <= "!";
+				uart_txd <= "!";
 				read_start <= 1;
 			end else
 			if (uart_rxd == ".") begin
@@ -142,11 +142,13 @@ module top(
 			uart_txd_strobe <= 1;
 		end else
 */
-		if (sd_rd_ready && uart_txd_ready) begin
-			uart_txd <= "X"; //sd_rd_data;
+		if (sd_rd_ready) begin
+			// read has completed, print it
+			uart_txd <= sd_rd_data;
 			uart_txd_strobe <= 1;
 		end else
-		if (!sd_busy && !read_start) begin
+		if (!sd_busy && read_start && !sd_wr_enable) begin
+			// we have a queued read, start it going
 			read_start <= 0;
 			sd_rd_enable <= 1;
 		end else
@@ -158,22 +160,17 @@ module top(
 		end
 	end
 
-	uart_tx txd(
-		.mclk(clk_120mhz),
+	uart_tx_fifo txd(
+		.clk(clk),
 		.reset(reset),
 		.baud_x1(clk_3mhz),
 		.serial(serial_txd),
 		.data(uart_txd),
 		.data_strobe(uart_txd_strobe),
-		.ready(uart_txd_ready),
-/*
-		.data(uart_rxd),
-		.data_strobe(uart_rxd_strobe)
-*/
 	);
 
 	uart_rx rxd(
-		.mclk(clk_120mhz),
+		.mclk(clk),
 		.reset(reset),
 		.baud_x4(clk_12mhz),
 		.serial(serial_rxd),
