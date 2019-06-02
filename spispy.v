@@ -133,7 +133,7 @@ module top(
 		MODE_RD_A2	= 6'b000110,
 		MODE_RD_A1	= 6'b000101,
 		MODE_RD_A0	= 6'b000100,
-		MODE_WR		= 6'b001000,
+		MODE_WR		= 6'b001100,
 		MODE_WR_A3	= 6'b001011,
 		MODE_WR_A2	= 6'b001010,
 		MODE_WR_A1	= 6'b001001,
@@ -207,23 +207,33 @@ module top(
 		MODE_WR_A3: begin
 			wr_addr[31:24] <= uart_rxd;
 			mode <= MODE_WR_A2;
+			uart_txd <= "3";
+			uart_txd_strobe <= 1;
 		end
 		MODE_WR_A2: begin
 			wr_addr[23:16] <= uart_rxd;
 			mode <= MODE_WR_A1;
+			uart_txd <= "2";
+			uart_txd_strobe <= 1;
 		end
 		MODE_WR_A1: begin
 			wr_addr[15: 8] <= uart_rxd;
 			mode <= MODE_WR_A0;
+			uart_txd <= "1";
+			uart_txd_strobe <= 1;
 		end
 		MODE_WR_A0: begin
 			wr_addr[ 7: 0] <= uart_rxd;
 			mode <= MODE_WR;
+			uart_txd <= "0";
+			uart_txd_strobe <= 1;
 		end
 		MODE_WR: begin
 			// should check that we don't have a pending write
 			sd_wr_data <= uart_rxd;
 			wr_pending <= 1;
+			uart_txd <= "w";
+			uart_txd_strobe <= 1;
 		end
 		//default: begin
 		MODE_INVALID: begin
@@ -259,13 +269,17 @@ module top(
 				wr_addr <= wr_addr + 1;
 				msg_len <= msg_len - 1;
 
+					uart_txd <= "W";
+					uart_txd_strobe <= 1;
+
 				// if we've written all the data to SDRAM
 				// go back to waiting
 				if (msg_len == 1) begin
 					mode <= MODE_WAIT;
-					uart_txd <= "W";
-					uart_txd_strobe <= 1;
 				end
+			end else begin
+				//uart_txd <= "w";
+				//uart_txd_strobe <= 1;
 			end
 		end else
 		if (mode == MODE_VERSION) begin
