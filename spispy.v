@@ -119,7 +119,7 @@ module top(
 	reg uart_txd_strobe;
 
 	reg wr_pending;
-	wire rd_pending = 1; // there is always a read "pending"
+	reg rd_pending;
 	reg [31:0] addr; // 32 bits, although most flash chips are 24 bits
 	reg [23:0] msg_len; // up to 16 MB at a time
 
@@ -140,6 +140,13 @@ module top(
 		MODE_VERSION	= 6'b111110,
 		MODE_INVALID	= 6'b111111;
 
+	localparam
+		CMD_HDR		= "!",
+		CMD_RD		= "R",
+		CMD_WR		= "W",
+		CMD_VERSION	= "V",
+		CMD_INVALID	= 8'hff;
+
 	always @(posedge clk)
 	begin
 		uart_txd_strobe <= 0;
@@ -155,7 +162,12 @@ module top(
 		if (uart_rxd_strobe)
 		case(mode)
 		MODE_WAIT: begin
-			if (uart_rxd == 8'hFF) begin
+			rd_pending <= 0;
+			wr_pending <= 0;
+			msg_len <= 0;
+			addr <= 0;
+
+			if (uart_rxd == CMD_HDR) begin
 				mode <= MODE_CMD;
 			end else begin
 				uart_txd <= "!";
@@ -196,22 +208,22 @@ module top(
 		MODE_CMD: begin
 			uart_txd <= uart_rxd;
 			uart_txd_strobe <= 1;
-			if (uart_rxd == "R") // 8'h52
-			begin
+			case(uart_rxd)
+			CMD_RD: begin
 				cmd_mode <= MODE_RD;
 				mode <= MODE_L2;
-			end else
-			if (uart_rxd == "W") // 8'h57
-			begin
+			end
+			CMD_WR: begin
 				cmd_mode <= MODE_WR;
 				mode <= MODE_L2;
-			end else
-			if (uart_rxd == "V") // 8'h56
-			begin
+			end
+			CMD_VERSION: begin
 				mode <= MODE_VERSION;
 				msg_len <= 8;
-			end else
+			end
+			default:
 				mode <= MODE_INVALID;
+			endcase
 		end
 
 		MODE_RD: begin
@@ -245,16 +257,18 @@ module top(
 			if (msg_len == 0) begin
 				mode <= MODE_WAIT;
 			end else
-			if (sd_rd_ready) begin
+			if (sd_rd_ready && rd_pending) begin
 				// new byte is available to send
 				uart_txd <= sd_rd_data;
 				uart_txd_strobe <= 1;
 				msg_len <= msg_len - 1;
 				addr <= addr + 1;
+				rd_pending <= 0;
 			end else
-			if (rd_pending
+			if (!rd_pending
 			&& uart_txd_ready
-			&& counter[10:0] == 0
+			&& !uart_txd_strobe
+			//&& counter[10:0] == 0
 			&& !sd_busy
 			&& !sd_rd_enable
 			&& !sd_wr_enable)
@@ -263,6 +277,7 @@ module top(
 				// start another read
 				sd_rd_enable <= 1;
 				sd_rd_addr <= addr;
+				rd_pending <= 1;
 			end
 		end else
 		if (mode == MODE_WR) begin
@@ -297,6 +312,8 @@ module top(
 	end
 	
 
+`define UART_FIFO
+`ifdef UART_FIFO
 	uart_tx_fifo #(.NUM(512)) txd(
 		.clk(clk),
 		.reset(reset),
@@ -304,11 +321,22 @@ module top(
 		.serial(serial_txd),
 		.data(uart_txd),
 		.data_strobe(uart_txd_strobe),
-		.space_available(uart_txd_ready)
+		.ready(uart_txd_ready)
 	);
+`else
+	uart_tx txd(
+		.clk(clk),
+		.reset(reset),
+		.baud_x1(clk_3mhz),
+		.serial(serial_txd),
+		.data(uart_txd),
+		.data_strobe(uart_txd_strobe),
+		.ready(uart_txd_ready)
+	);
+`endif
 
 	uart_rx rxd(
-		.mclk(clk),
+		.clk(clk),
 		.reset(reset),
 		.baud_x4(clk_12mhz),
 		.serial(serial_rxd),

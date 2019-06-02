@@ -41,7 +41,7 @@
  */
 
 module uart_tx(
-	input mclk,
+	input clk,
 	input reset,
 	input baud_x1,
 	output serial,
@@ -77,7 +77,7 @@ module uart_tx(
     * State machine
     */
 
-   always @(posedge mclk)
+   always @(posedge clk)
      if (reset) begin
         shiftreg <= 0;
         serial_r <= 0;
@@ -115,10 +115,10 @@ endmodule
  * Error bytes are ignored.
  */
 
-module uart_rx(mclk, reset, baud_x4,
+module uart_rx(clk, reset, baud_x4,
                       serial, data, data_strobe);
 
-   input        mclk, reset, baud_x4, serial;
+   input        clk, reset, baud_x4, serial;
    output [7:0] data;
    output       data_strobe;
 
@@ -126,7 +126,7 @@ module uart_rx(mclk, reset, baud_x4,
     * Synchronize the serial input to this clock domain
     */
    wire         serial_sync;
-   d_flipflop_pair input_dff(mclk, reset, serial, serial_sync);
+   d_flipflop_pair input_dff(clk, reset, serial, serial_sync);
 
    /*
     * State machine: Four clocks per bit, 10 total bits.
@@ -148,7 +148,7 @@ module uart_rx(mclk, reset, baud_x4,
 
    assign       data = shiftreg[7:0];
 
-   always @(posedge mclk or posedge reset)
+   always @(posedge clk or posedge reset)
      if (reset) begin
         state <= 0;
         data_strobe <= 0;
@@ -185,7 +185,7 @@ module uart_tx_fifo(
 	input [7:0] data,
 	input data_strobe,
 	output serial,
-	output space_available
+	output ready
 );
 	parameter NUM = 512;
 
@@ -194,7 +194,7 @@ module uart_tx_fifo(
 	reg [7:0] uart_txd;
 
 	uart_tx txd(
-		.mclk(clk),
+		.clk(clk),
 		.reset(reset),
 		.baud_x1(baud_x1),
 		.serial(serial),
@@ -212,7 +212,7 @@ module uart_tx_fifo(
 		.write_data(data),
 		.write_strobe(data_strobe),
 		.data_available(fifo_available),
-		.space_available(space_available),
+		.space_available(ready),
 		.read_data(uart_txd),
 		.read_strobe(fifo_read_strobe)
 	);
@@ -225,6 +225,7 @@ module uart_tx_fifo(
 
 		if (fifo_available
 		&&  uart_txd_ready
+		//&&  baud_x1
 		&& !data_strobe // avoid dual port RAM if possible
 		&& !uart_txd_strobe // don't TX twice on one byte
 		) begin
