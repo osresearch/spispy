@@ -8,7 +8,7 @@
  * protocol.
  *
  * Command protocol looks like:
- * FF L2 L1 L0 A3 A2 A1 A0 CMD ....
+ * FF CMD [L2 L1 L0 A3 A2 A1 A0 .... ]
  *
  * Command bytes are "R", "W" and "V"
  */
@@ -267,8 +267,8 @@ module top(
 			end else
 			if (!rd_pending
 			&& uart_txd_ready
-			//&& !uart_txd_strobe
-			&& counter[6:0] == 0
+			&& !uart_txd_strobe
+			//&& counter[6:0] == 0
 			&& !sd_busy
 			&& !sd_rd_enable
 			&& !sd_wr_enable)
@@ -302,9 +302,11 @@ module top(
 		if (mode == MODE_VERSION) begin
 			if (msg_len == 0)
 				mode <= MODE_WAIT;
-			msg_len <= msg_len - 1;
-			uart_txd <= "1";
-			uart_txd_strobe <= 1;
+			if (uart_txd_ready) begin
+				msg_len <= msg_len - 1;
+				uart_txd <= "1";
+				uart_txd_strobe <= 1;
+			end
 		end
 		begin
 			// nothing to do this clock cycle.  relax!
@@ -312,7 +314,7 @@ module top(
 	end
 	
 
-`define UART_FIFO
+`undef UART_FIFO
 `ifdef UART_FIFO
 	uart_tx_fifo #(.NUM(512)) txd(
 		.clk(clk),
