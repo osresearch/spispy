@@ -8,7 +8,7 @@
 `include "util.v"
 `include "uart.v"
 `include "gpio.v"
-`include "pll_120.v"
+`include "pll_96.v"
 `include "sdram_controller.v"
 
 module top(
@@ -27,10 +27,15 @@ module top(
 	output sdram_ras,
 	output sdram_cas
 );
-	wire locked, clk_120mhz, clk;
+	wire locked, clk_96mhz, clk;
 	wire reset = !locked;
-	pll_120 pll(clk_100mhz, clk_120mhz, locked);
-	always @(posedge clk_120mhz) clk <= !clk;
+	pll_96 pll(clk_100mhz, clk_96mhz, locked);
+//`define CLK48
+`ifdef CLK48
+	always @(posedge clk_96mhz) clk <= !clk;
+`else
+	assign clk = clk_96mhz;
+`endif
 
 	// sdram logical interface
 	reg [24:0] sd_wr_addr = 0;
@@ -87,11 +92,16 @@ module top(
 		.out(1),
 	);
 
-	// generate a 3 MHz/12 MHz serial clock from the 100 MHz clock
+	// generate a 3 MHz/12 MHz serial clock from the 96 MHz clock
 	// this is the 3 Mb/s maximum supported by the FTDI chip
 	wire clk_3mhz, clk_12mhz;
-	divide_by_n #(.N(5)) div1(clk, reset, clk_12mhz);
-	divide_by_n #(.N(20)) div4(clk, reset, clk_3mhz);
+`ifdef CLK48
+	divide_by_n #(.N(4)) div1(clk, reset, clk_12mhz);
+	divide_by_n #(.N(16)) div4(clk, reset, clk_3mhz);
+`else
+	divide_by_n #(.N(8)) div1(clk, reset, clk_12mhz);
+	divide_by_n #(.N(32)) div4(clk, reset, clk_3mhz);
+`endif
 
 	wire [7:0] uart_rxd;
 	wire uart_rxd_strobe;
@@ -99,7 +109,7 @@ module top(
 	reg uart_txd_strobe;
 	reg read_start = 0; // have we received a full address from the
 
-	reg [28:0] counter;
+	reg [20:0] counter;
 	always @(posedge clk)
 	begin
 		counter <= counter + 1;

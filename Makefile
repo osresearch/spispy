@@ -1,10 +1,8 @@
 
-all: pulse.bin
-all: blink.bin
-all: serial.bin
-all: serial-echo.bin
-all: spram-demo.bin
+all: sdram-test.bin
 #all: lighthouse-demo.bin
+
+sdram-test.json: pll_96.v
 
 
 include Makefile.icestorm
