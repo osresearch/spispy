@@ -120,6 +120,10 @@ module top(
 				read_start <= 1;
 				sd_rd_addr <= sd_rd_addr + 1;
 			end else
+			if (uart_rxd == "x") begin
+				read_start <= 1;
+				sd_rd_addr <= 0;
+			end else
 			if ("0" <= uart_rxd && uart_rxd <= "9") begin
 				sd_rd_addr <= { sd_rd_addr[19:4], uart_rxd - "0" };
 				uart_txd <= uart_rxd;
@@ -152,9 +156,9 @@ module top(
 			read_start <= 0;
 			sd_rd_enable <= 1;
 		end else
-		if (!sd_busy && !sd_wr_enable) begin
+		if (!sd_busy && !sd_wr_enable && counter[8:0] == 0 ) begin
 			// write something to it!
-			sd_wr_data <= " " + sd_wr_addr[5:0];
+			sd_wr_data <= " " + sd_wr_addr[6:0];
 			sd_wr_addr <= sd_wr_addr + 1;
 			sd_wr_enable <= 1;
 		end
