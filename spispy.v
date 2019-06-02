@@ -267,8 +267,8 @@ module top(
 			end else
 			if (!rd_pending
 			&& uart_txd_ready
-			&& !uart_txd_strobe
-			//&& counter[10:0] == 0
+			//&& !uart_txd_strobe
+			&& counter[6:0] == 0
 			&& !sd_busy
 			&& !sd_rd_enable
 			&& !sd_wr_enable)
