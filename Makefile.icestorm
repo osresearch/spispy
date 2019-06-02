@@ -54,7 +54,6 @@ PNR ?= $(ICEPATH)nextpnr-ice40
 		--asc $@ \
 		--pcf $(PIN_SRC) \
 		--json $(basename $@).json \
-		--verbose 
 
 %.gui: %.json
 	$(PNR) --gui --$(DEVICE) --pcf $(PIN_SRC) --json $<
