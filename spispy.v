@@ -8,12 +8,9 @@
  * protocol.
  *
  * Command protocol looks like:
- * FF L0 cmd ...L0 bytes...
+ * FF L2 L1 L0 A3 A2 A1 A0 CMD ....
  *
- * Commands are:
- * Read:  52 A3 A1 A2 A0
- * Write: 57 A3 A1 A2 A0 ......
- *
+ * Command bytes are "R", "W" and "V"
  */
 `default_nettype none
 `include "util.v"
@@ -113,31 +110,33 @@ module top(
 	divide_by_n #(.N(8)) div1(clk, reset, clk_12mhz);
 	divide_by_n #(.N(32)) div4(clk, reset, clk_3mhz);
 `endif
+	reg [20:0] counter;
 
 	wire [7:0] uart_rxd;
 	wire uart_rxd_strobe;
+	wire uart_txd_ready;
 	reg [7:0] uart_txd;
 	reg uart_txd_strobe;
 
 	reg wr_pending;
-	reg [31:0] wr_addr;
-	reg [7:0] msg_len;
+	wire rd_pending = 1; // there is always a read "pending"
+	reg [31:0] addr; // 32 bits, although most flash chips are 24 bits
+	reg [23:0] msg_len; // up to 16 MB at a time
 
+	reg [5:0] cmd_mode;
 	reg [5:0] mode;
 	localparam
 		MODE_WAIT	= 6'b000000,
-		MODE_LEN	= 6'b000001,
-		MODE_CMD	= 6'b000010,
-		MODE_RD		= 6'b000011,
-		MODE_RD_A3	= 6'b000111,
-		MODE_RD_A2	= 6'b000110,
-		MODE_RD_A1	= 6'b000101,
-		MODE_RD_A0	= 6'b000100,
+		MODE_CMD	= 6'b000100,
+		MODE_L2		= 6'b000001,
+		MODE_L1		= 6'b000010,
+		MODE_L0		= 6'b000011,
+		MODE_A3		= 6'b010111,
+		MODE_A2		= 6'b010110,
+		MODE_A1		= 6'b010101,
+		MODE_A0		= 6'b010100,
+		MODE_RD		= 6'b010011,
 		MODE_WR		= 6'b001100,
-		MODE_WR_A3	= 6'b001011,
-		MODE_WR_A2	= 6'b001010,
-		MODE_WR_A1	= 6'b001001,
-		MODE_WR_A0	= 6'b001000,
 		MODE_VERSION	= 6'b111110,
 		MODE_INVALID	= 6'b111111;
 
@@ -146,6 +145,7 @@ module top(
 		uart_txd_strobe <= 0;
 		sd_rd_enable <= 0;
 		sd_wr_enable <= 0;
+		counter <= counter + 1;
 
 		if (reset) begin
 			mode <= MODE_WAIT;
@@ -156,140 +156,140 @@ module top(
 		case(mode)
 		MODE_WAIT: begin
 			if (uart_rxd == 8'hFF) begin
-				mode <= MODE_LEN;
-				uart_txd <= "@";
-				uart_txd_strobe <= 1;
+				mode <= MODE_CMD;
 			end else begin
 				uart_txd <= "!";
 				uart_txd_strobe <= 1;
 			end
 		end
-		MODE_LEN: begin
-			msg_len <= uart_rxd;
-			uart_txd <= "0" + uart_rxd;
-			uart_txd_strobe <= 1;
-			mode <= MODE_CMD;
+		MODE_L2: begin
+			msg_len[23:16] <= uart_rxd;
+			mode <= MODE_L1;
 		end
+		MODE_L1: begin
+			msg_len[15: 8] <= uart_rxd;
+			mode <= MODE_L0;
+		end
+		MODE_L0: begin
+			msg_len[ 7: 0] <= uart_rxd;
+			mode <= MODE_A3;
+		end
+
+		// build the address
+		MODE_A3: begin
+			addr[31:24] <= uart_rxd;
+			mode <= MODE_A2;
+		end
+		MODE_A2: begin
+			addr[23:16] <= uart_rxd;
+			mode <= MODE_A1;
+		end
+		MODE_A1: begin
+			addr[15: 8] <= uart_rxd;
+			mode <= MODE_A0;
+		end
+		MODE_A0: begin
+			addr[ 7: 0] <= uart_rxd;
+			mode <= cmd_mode;
+		end
+
 		MODE_CMD: begin
 			uart_txd <= uart_rxd;
 			uart_txd_strobe <= 1;
 			if (uart_rxd == "R") // 8'h52
-				mode <= MODE_RD_A3;
-			else
+			begin
+				cmd_mode <= MODE_RD;
+				mode <= MODE_L2;
+			end else
 			if (uart_rxd == "W") // 8'h57
-				mode <= MODE_WR_A3;
-			else
+			begin
+				cmd_mode <= MODE_WR;
+				mode <= MODE_L2;
+			end else
 			if (uart_rxd == "V") // 8'h56
+			begin
 				mode <= MODE_VERSION;
-			else
+				msg_len <= 8;
+			end else
 				mode <= MODE_INVALID;
 		end
 
-		// build the read address (only have a 32-MB partial address)
-		MODE_RD_A3: begin
-			sd_rd_addr[24:24] <= uart_rxd[0:0];
-			mode <= MODE_RD_A2;
-		end
-		MODE_RD_A2: begin
-			sd_rd_addr[23:16] <= uart_rxd;
-			mode <= MODE_RD_A1;
-		end
-		MODE_RD_A1: begin
-			sd_rd_addr[15: 8] <= uart_rxd;
-			mode <= MODE_RD_A0;
-		end
-		MODE_RD_A0: begin
-			sd_rd_addr[ 7: 0] <= uart_rxd;
-			mode <= MODE_RD;
+		MODE_RD: begin
+			// they are sending too fast. what should we do?
 		end
 
-		// build the write address
-		MODE_WR_A3: begin
-			wr_addr[31:24] <= uart_rxd;
-			mode <= MODE_WR_A2;
-			uart_txd <= "3";
-			uart_txd_strobe <= 1;
+		MODE_VERSION: begin
+			// they are sending too fast. what should we do?
 		end
-		MODE_WR_A2: begin
-			wr_addr[23:16] <= uart_rxd;
-			mode <= MODE_WR_A1;
-			uart_txd <= "2";
-			uart_txd_strobe <= 1;
-		end
-		MODE_WR_A1: begin
-			wr_addr[15: 8] <= uart_rxd;
-			mode <= MODE_WR_A0;
-			uart_txd <= "1";
-			uart_txd_strobe <= 1;
-		end
-		MODE_WR_A0: begin
-			wr_addr[ 7: 0] <= uart_rxd;
-			mode <= MODE_WR;
-			uart_txd <= "0";
-			uart_txd_strobe <= 1;
-		end
+
 		MODE_WR: begin
 			// should check that we don't have a pending write
 			sd_wr_data <= uart_rxd;
 			wr_pending <= 1;
-			uart_txd <= "w";
-			uart_txd_strobe <= 1;
 		end
-		//default: begin
-		MODE_INVALID: begin
-			uart_txd <= mode;
+
+		default: begin
+			uart_txd <= "@";
 			uart_txd_strobe <= 1;
+			msg_len <= 0;
 			mode <= MODE_WAIT;
 		end
 		endcase
 		else
+		if (mode == MODE_INVALID) begin
+			mode <= MODE_WAIT;
+			uart_txd <= "?";
+			uart_txd_strobe <= 1;
+		end else
 		if (mode == MODE_RD) begin
+			if (msg_len == 0) begin
+				mode <= MODE_WAIT;
+			end else
 			if (sd_rd_ready) begin
 				// new byte is available to send
 				uart_txd <= sd_rd_data;
 				uart_txd_strobe <= 1;
 				msg_len <= msg_len - 1;
-				sd_rd_addr <= sd_rd_addr + 1;
-
-				// if we're done with the read, stop
-				if (msg_len == 1) begin
-					mode <= MODE_WAIT;
-				end
+				addr <= addr + 1;
 			end else
-			if (!sd_busy && !sd_rd_enable && !sd_wr_enable) begin
+			if (rd_pending
+			&& uart_txd_ready
+			&& counter[10:0] == 0
+			&& !sd_busy
+			&& !sd_rd_enable
+			&& !sd_wr_enable)
+			begin
+				// the SDRAM and UART are ready to
 				// start another read
 				sd_rd_enable <= 1;
+				sd_rd_addr <= addr;
 			end
 		end else
-		if (mode == MODE_WR && wr_pending) begin
-			if (!sd_busy && !sd_rd_enable && !sd_wr_enable) begin
+		if (mode == MODE_WR) begin
+			if (msg_len == 0) begin
+				mode <= MODE_WAIT;
+				uart_txd <= "W";
+				uart_txd_strobe <= 1;
+			end else
+			if (wr_pending
+			&& !sd_busy
+			&& !sd_rd_enable
+			&& !sd_wr_enable)
+			begin
+				// the SDRAM is ready for a write
 				sd_wr_enable <= 1;
-				sd_wr_addr <= wr_addr;
+				sd_wr_addr <= addr;
 				wr_pending <= 0;
-				wr_addr <= wr_addr + 1;
+				addr <= addr + 1;
 				msg_len <= msg_len - 1;
-
-					uart_txd <= "W";
-					uart_txd_strobe <= 1;
-
-				// if we've written all the data to SDRAM
-				// go back to waiting
-				if (msg_len == 1) begin
-					mode <= MODE_WAIT;
-				end
-			end else begin
-				//uart_txd <= "w";
-				//uart_txd_strobe <= 1;
 			end
 		end else
 		if (mode == MODE_VERSION) begin
-			if (msg_len != 0) begin
-				msg_len <= msg_len - 1;
-				uart_txd <= "1";
-				uart_txd_strobe <= 1;
-			end else begin
+			if (msg_len == 0)
 				mode <= MODE_WAIT;
-			end
+			msg_len <= msg_len - 1;
+			uart_txd <= "1";
+			uart_txd_strobe <= 1;
 		end
 		begin
 			// nothing to do this clock cycle.  relax!
@@ -297,13 +297,14 @@ module top(
 	end
 	
 
-	uart_tx_fifo txd(
+	uart_tx_fifo #(.NUM(512)) txd(
 		.clk(clk),
 		.reset(reset),
 		.baud_x1(clk_3mhz),
 		.serial(serial_txd),
 		.data(uart_txd),
 		.data_strobe(uart_txd_strobe),
+		.space_available(uart_txd_ready)
 	);
 
 	uart_rx rxd(
