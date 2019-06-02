@@ -184,9 +184,10 @@ module uart_tx_fifo(
 	input baud_x1,
 	input [7:0] data,
 	input data_strobe,
-	output serial
+	output serial,
+	output space_available
 );
-	parameter NUM = 32;
+	parameter NUM = 512;
 
 	wire uart_txd_ready; // high the UART is ready to take a new byte
 	reg uart_txd_strobe; // pulse when we have a new byte to transmit
@@ -203,7 +204,7 @@ module uart_tx_fifo(
 	);
 
 	wire fifo_available;
-	wire fifo_read_strobe;
+	reg fifo_read_strobe;
 
 	fifo #(.NUM(NUM), .WIDTH(8)) buffer(
 		.clk(clk),
@@ -211,6 +212,7 @@ module uart_tx_fifo(
 		.write_data(data),
 		.write_strobe(data_strobe),
 		.data_available(fifo_available),
+		.space_available(space_available),
 		.read_data(uart_txd),
 		.read_strobe(fifo_read_strobe)
 	);

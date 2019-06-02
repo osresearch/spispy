@@ -76,6 +76,7 @@ module fifo(
 	input clk,
 	input reset,
 	output data_available,
+	output space_available,
 	input [WIDTH-1:0] write_data,
 	input write_strobe,
 	output [WIDTH-1:0] read_data,
@@ -87,9 +88,14 @@ module fifo(
 	reg [WIDTH-1:0] buffer[0:NUM-1];
 	reg [`CLOG2(NUM)-1:0] write_ptr;
 	reg [`CLOG2(NUM)-1:0] read_ptr;
+	reg space_available;
+	reg data_available;
 
-	assign read_data = buffer[read_ptr];
-	assign data_available = read_ptr != write_ptr;
+	reg [WIDTH-1:0] read_data;
+
+	//assign read_data = buffer[read_ptr];
+	//assign data_available = read_ptr != write_ptr;
+	//assign space_available = read_ptr != write_ptr + 1;
 
 	always @(posedge clk) begin
 		if (reset) begin
@@ -100,8 +106,15 @@ module fifo(
 				buffer[write_ptr] <= write_data;
 				write_ptr <= write_ptr + 1;
 			end
+
 			if (read_strobe) begin
 				read_ptr <= read_ptr + 1;
+				read_data <= buffer[read_ptr+1];
+				data_available <= read_ptr + 1 != write_ptr;
+			end else begin
+				read_data <= buffer[read_ptr];
+				data_available <= read_ptr != write_ptr;
+				space_available <= read_ptr != write_ptr + 2;
 			end
 		end
 	end
