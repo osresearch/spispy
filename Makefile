@@ -1,3 +1,4 @@
+BOARD ?= beaglewire
 
 all: sdram-test.bin
 all: spispy.bin
