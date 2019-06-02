@@ -32,13 +32,16 @@ module top(
 	pll_120 pll(clk_100mhz, clk_120mhz, locked);
 
 	// sdram logical interface
-	reg [24:0] sd_addr;
-	wire [7:0] sd_rd_data;
+	reg [24:0] sd_wr_addr = 0;
 	reg [7:0] sd_wr_data;
 	reg sd_wr_enable;
+
+	reg [24:0] sd_rd_addr = 0;
+	wire [7:0] sd_rd_data;
 	reg sd_rd_enable = 0;
-	wire sd_busy;
 	wire sd_rd_ready;
+
+	wire sd_busy;
 	assign sdram_clk = clk_120mhz;
 
 	sdram_controller sdram(
@@ -57,10 +60,10 @@ module top(
 		.data_mask(sdram_dqm),
 
 		// logical interface
-		.wr_addr(sd_addr),
+		.wr_addr(sd_wr_addr),
 		.wr_enable(sd_wr_enable),
 		.wr_data(sd_wr_data),
-		.rd_addr(sd_addr),
+		.rd_addr(sd_rd_addr),
 		.rd_enable(sd_rd_enable),
 		.rd_data(sd_rd_data),
 		.rd_ready(sd_rd_ready),
@@ -93,9 +96,8 @@ module top(
 	wire uart_rxd_strobe;
 	reg [7:0] uart_txd;
 	reg uart_txd_strobe;
-
-	// where the writer is wrapping
-	reg [24:0] wr_addr = 0;
+	wire uart_txd_ready;
+	reg read_start = 0; // have we received a full address from the
 
 	reg [28:0] counter;
 	always @(posedge clk_120mhz)
@@ -103,22 +105,55 @@ module top(
 		counter <= counter + 1;
 		uart_txd_strobe <= 0;
 
-		// stop the write
+		// unset the read/write flags
 		sd_wr_enable <= 0;
+		sd_rd_enable <= 0;
 
 		if (uart_rxd_strobe) begin
-			uart_txd <= uart_rxd;
-			uart_txd_strobe <= 1;
+			// build up an address to read
+
+			if (uart_rxd == "\n") begin
+				//uart_txd <= "!";
+				read_start <= 1;
+			end else
+			if (uart_rxd == ".") begin
+				read_start <= 1;
+				sd_rd_addr <= sd_rd_addr + 1;
+			end else
+			if ("0" <= uart_rxd && uart_rxd <= "9") begin
+				sd_rd_addr <= { sd_rd_addr[19:4], uart_rxd - "0" };
+				uart_txd <= uart_rxd;
+				uart_txd_strobe <= 1;
+			end else
+			if ("a" <= uart_rxd && uart_rxd <= "f") begin
+				sd_rd_addr <= { sd_rd_addr[19:4], uart_rxd - "a" + 4'h0A };
+				uart_txd <= uart_rxd;
+				uart_txd_strobe <= 1;
+			end else
+			if ("A" <= uart_rxd && uart_rxd <= "F") begin
+				sd_rd_addr <= { sd_rd_addr[19:4], uart_rxd - "A" + 4'h0A };
+				uart_txd <= uart_rxd;
+				uart_txd_strobe <= 1;
+			end
 		end else
+/*
 		if (counter[24:0] == 0) begin
 			uart_txd <= "A" + counter[28:25];
 			uart_txd_strobe <= 1;
 		end else
+*/
+		if (sd_rd_ready && uart_txd_ready) begin
+			uart_txd <= "X"; //sd_rd_data;
+			uart_txd_strobe <= 1;
+		end else
+		if (!sd_busy && !read_start) begin
+			read_start <= 0;
+			sd_rd_enable <= 1;
+		end else
 		if (!sd_busy && !sd_wr_enable) begin
 			// write something to it!
-			sd_addr <= wr_addr;
-			sd_wr_data <= wr_addr ^ 8'h55;
-			wr_addr <= wr_addr + 1;
+			sd_wr_data <= " " + sd_wr_addr[5:0];
+			sd_wr_addr <= sd_wr_addr + 1;
 			sd_wr_enable <= 1;
 		end
 	end
@@ -129,7 +164,8 @@ module top(
 		.baud_x1(clk_3mhz),
 		.serial(serial_txd),
 		.data(uart_txd),
-		.data_strobe(uart_txd_strobe)
+		.data_strobe(uart_txd_strobe),
+		.ready(uart_txd_ready),
 /*
 		.data(uart_rxd),
 		.data_strobe(uart_rxd_strobe)
