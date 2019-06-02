@@ -95,8 +95,8 @@ module fifo(
 	reg [WIDTH-1:0] buffer[0:NUM-1];
 	reg [BITS-1:0] write_ptr;
 	reg [BITS-1:0] read_ptr;
-	reg space_available;
-	reg data_available;
+	//reg space_available;
+	//reg data_available;
 
 	reg [WIDTH-1:0] read_data;
 
@@ -137,11 +137,10 @@ module pwm(
 	parameter BITS = 8;
 
 	reg [BITS-1:0] counter;
+	assign out = counter < bright;
+
 	always @(posedge clk)
-	begin
 		counter <= counter + 1;
-		out <= counter < bright;
-	end
 
 endmodule
 

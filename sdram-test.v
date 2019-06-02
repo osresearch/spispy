@@ -184,7 +184,7 @@ module top(
 	);
 
 	uart_rx rxd(
-		.mclk(clk),
+		.clk(clk),
 		.reset(reset),
 		.baud_x4(clk_12mhz),
 		.serial(serial_rxd),
