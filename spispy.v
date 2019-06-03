@@ -147,7 +147,7 @@ module top(
 
 `define UART_FIFO
 `ifdef UART_FIFO
-	uart_tx_fifo #(.NUM(512))
+	uart_tx_fifo #(.NUM(16384))
 `else
 	uart_tx
 `endif
