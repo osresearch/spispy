@@ -19,6 +19,7 @@
 `include "pll_96.v"
 `include "sdram_controller.v"
 `include "user.v"
+//`include "spi_device.v"
 
 module top(
 	input clk_100mhz,
@@ -54,7 +55,7 @@ module top(
 	wire sd_we;
 	wire sd_enable;
 	wire sd_rd_ready;
-	wire sd_refresh_inhibit = 0;
+	wire sd_refresh_inhibit;
 
 	wire sd_busy;
 	assign sdram_clk = clk;
@@ -156,6 +157,7 @@ module top(
 		.uart_txd_strobe(uart_txd_strobe),
 		.uart_txd_ready(uart_txd_ready),
 		// SDRAM
+		.sd_refresh_inhibit(sd_refresh_inhibit),
 		.sd_addr(sd_addr),
 		.sd_wr_data(sd_wr_data),
 		.sd_rd_data(sd_rd_data),

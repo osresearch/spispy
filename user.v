@@ -24,6 +24,7 @@ module user_command_parser(
 	input sd_busy,
 	output reg sd_we,
 	output reg sd_enable,
+	output reg sd_refresh_inhibit
 );
 	parameter ADDR_BITS = 32;
 
@@ -74,6 +75,7 @@ module user_command_parser(
 		if (uart_rxd_strobe)
 		case(mode)
 		MODE_WAIT: begin
+			sd_refresh_inhibit <= 0;
 			rd_pending <= 0;
 			wr_pending <= 0;
 			msg_len <= 0;
@@ -150,6 +152,7 @@ module user_command_parser(
 			// should check that we don't have a pending write
 			sd_wr_data <= uart_rxd;
 			wr_pending <= 1;
+			sd_refresh_inhibit <= 1;
 		end
 
 		default: begin
