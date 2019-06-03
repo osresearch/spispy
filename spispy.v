@@ -5,12 +5,8 @@
  * it over a SPI bus to an external device.
  *
  * This also configures the serial port at 3 Mb/s for the command
- * protocol.
+ * protocol in user.v.
  *
- * Command protocol looks like:
- * FF CMD [L2 L1 L0 A3 A2 A1 A0 .... ]
- *
- * Command bytes are "R", "W" and "V"
  */
 `default_nettype none
 `include "util.v"
@@ -19,11 +15,12 @@
 `include "pll_96.v"
 `include "sdram_controller.v"
 `include "user.v"
-//`include "spi_device.v"
+`include "spi_device.v"
 
 module top(
 	input clk_100mhz,
-	inout [7:0] pmod1,
+	inout [7:0] pmod1, // serial port
+	inout [7:0] pmod2, // spi flash clip
 
 	// SDRAM physical interface
 	output [12:0] sdram_addr,
@@ -37,6 +34,16 @@ module top(
 	output sdram_ras,
 	output sdram_cas
 );
+	// beaglewire pinouts
+	wire serial_txd_pin	= pmod1[0];
+	wire serial_rxd_pin	= pmod1[1];
+
+	wire spi_clk_pin	= pmod2[0];
+	wire spi_miso_pin	= pmod2[1];
+	wire spi_mosi_pin	= pmod2[2];
+	wire spi_cs_pin		= pmod2[3];
+
+
 	wire locked, clk_96mhz, clk;
 	wire reset = !locked;
 	pll_96 pll(clk_100mhz, clk_96mhz, locked);
@@ -92,19 +99,22 @@ module top(
 
 	gpio gpio_txd(
 		.enable(1), // always on
-		.pin(pmod1[0]),
+		.pin(serial_txd_pin),
 		.out(serial_txd),
 	);
 
 	gpio #(.PULLUP(1)) gpio_rxd(
 		.enable(0), // always input, with pullup
-		.pin(pmod1[1]),
+		.pin(serial_rxd_pin),
 		.in(serial_rxd),
 		.out(1),
 	);
 
 	// generate a 3 MHz/12 MHz serial clock from the 96 MHz clock
 	// this is the 3 Mb/s maximum supported by the FTDI chip
+	// note that some Linux tools can have trouble keeping up with
+	// this data rate; xxd -g1 for instance will drop bytes on
+	// long bursts (more than 1KB).
 	wire clk_3mhz, clk_12mhz;
 `ifdef CLK48
 	divide_by_n #(.N(4)) div1(clk, reset, clk_12mhz);
@@ -145,6 +155,110 @@ module top(
 		.data_strobe(uart_rxd_strobe)
 	);
 
+	// SPI flash
+	// in spispy mode all of them are inputs.
+	// in toctou mode the cs and miso are output;
+	// cs is driven high to deselect the flash chip
+	// and miso is driven with the fpga provided data
+	reg spi_tristate = 0;
+
+	// if we're faking the !CS pin (driving the output high)
+	// tell our SPI device that it is still selected.
+	reg spi_cs_enable = 0;
+	wire fake_spi_cs = spi_cs_enable ? 0 : spi_cs_in;
+
+	reg spi_cs_out = 1; // always high
+	reg spi_clk_out = 0;
+	reg spi_mosi_out = 0;
+	wire spi_miso_out; // controlled by spi_device
+
+	wire spi_cs_in;
+	wire spi_clk_in;
+	wire spi_mosi_in;
+	wire spi_miso_in;
+
+	gpio #(.PULLUP(1)) gpio_spi_cs(
+		.enable(spi_tristate & spi_cs_enable),
+		.pin(spi_cs_pin),
+		.in(spi_cs_in),
+		.out(spi_cs_out),
+	);
+
+	gpio gpio_spi_clk(
+		.enable(0), // always input, until we have a reader built in
+		.pin(spi_clk_pin),
+		.in(spi_clk_in),
+		.out(spi_clk_out),
+	);
+
+	gpio gpio_spi_mosi(
+		.enable(0), // always input, until we have a reader
+		.pin(spi_mosi_pin),
+		.in(spi_mosi_in),
+		.out(spi_mosi_out),
+	);
+
+	gpio gpio_spi_miso(
+		.enable(spi_tristate & spi_cs_enable),
+		.pin(spi_miso_pin),
+		.in(spi_miso_in),
+		.out(spi_miso_out),
+	);
+
+	// remember that this is clocked in spi_clk domain,
+	// so it is not to be trusted.
+	wire spi_rx_strobe;
+	wire [7:0] spi_rx_data;
+	reg [7:0] spi_tx_data = 0;
+
+	spi_device spi(
+		.spi_clk(spi_clk_in),
+		.spi_cs(fake_spi_cs),
+		.spi_miso(spi_miso_out),
+		.spi_mosi(spi_mosi_in),
+		.spi_rx_strobe(spi_rx_strobe),
+		.spi_rx_data(spi_rx_data),
+		.spi_tx_data(spi_tx_data),
+	);
+
+	// serial output arbitrator between the user command
+	// parser and the spi device decoder
+	reg [7:0] spi_data_buffer;
+	reg spi_data_pending;
+	reg [7:0] user_data_buffer;
+	reg user_data_pending;
+	wire user_txd_strobe;
+	wire [7:0] user_txd_data;
+	wire user_txd_ready = !user_data_pending;
+
+	always @(posedge clk)
+	begin
+		uart_txd_strobe <= 0;
+
+		if (spi_rx_strobe) begin
+			spi_data_buffer <= spi_rx_data;
+			spi_data_pending <= 1;
+		end else
+		if (spi_data_pending && uart_txd_ready) begin
+			uart_txd <= spi_data_buffer;
+			uart_txd_strobe <= 1;
+			spi_data_pending <= 0;
+		end
+
+		if (user_txd_strobe) begin
+			user_data_buffer <= user_txd_data;
+			user_data_pending <= 1;
+		end else
+		if (user_data_pending && uart_txd_ready && !spi_data_pending) begin
+			uart_txd <= user_data_buffer;
+			uart_txd_strobe <= 1;
+			user_data_pending <= 0;
+		end
+	end
+
+
+	// user command parser pulls in data from SPI
+	// and from the serial port, drives the SDRAM
 	user_command_parser #(
 		.ADDR_BITS(ADDR_BITS)
 	) parser(
@@ -153,9 +267,9 @@ module top(
 		// serial I/O
 		.uart_rxd(uart_rxd),
 		.uart_rxd_strobe(uart_rxd_strobe),
-		.uart_txd(uart_txd),
-		.uart_txd_strobe(uart_txd_strobe),
-		.uart_txd_ready(uart_txd_ready),
+		.uart_txd(user_txd_data),
+		.uart_txd_strobe(user_txd_strobe),
+		.uart_txd_ready(user_txd_ready),
 		// SDRAM
 		.sd_refresh_inhibit(sd_refresh_inhibit),
 		.sd_addr(sd_addr),
