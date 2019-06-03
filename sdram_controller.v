@@ -1,6 +1,16 @@
 `ifndef _sdram_controller_v_
 `define _sdram_controller_v_
 
+/*
+ * SDRAM interface
+ *
+ * This is the GSOC version, which has some problems like losing
+ * wr/rd commands if they occur during the refresh cycle.
+ *
+ * Need to try porting my updated version and re-testing now
+ * that the uart issues have been fixed.
+ */
+
 module sdram_controller (
     input  [HADDR_WIDTH-1:0]   wr_addr,
     input  [7:0]               wr_data,
@@ -171,7 +181,7 @@ always @ (posedge clk)
     else
       rd_ready_r <= 1'b0;
 
-    busy <= state[4];
+    busy <= state != IDLE || next != IDLE; // state[4];
 
     if (rd_enable)
       haddr_r <= rd_addr;
@@ -248,13 +258,7 @@ begin
    state_cnt_nxt = 4'd0;
    command_nxt = CMD_NOP;
    if (state == IDLE)
-        // Monitor for refresh or hold
-        if (refresh_cnt >= CYCLES_BETWEEN_REFRESH)
-          begin
-          next = REF_PRE;
-          command_nxt = CMD_PALL;
-          end
-        else if (rd_enable && !rd_enable_prev)
+        if (rd_enable && !rd_enable_prev)
           begin
           next = READ_ACT;
           command_nxt = CMD_BACT;
@@ -263,6 +267,13 @@ begin
           begin
           next = WRIT_ACT;
           command_nxt = CMD_BACT;
+          end
+        // Monitor for refresh or hold at lower priority
+	// so that we don't lose read/write commands
+        else if (refresh_cnt >= CYCLES_BETWEEN_REFRESH)
+          begin
+          next = REF_PRE;
+          command_nxt = CMD_PALL;
           end
         else
           begin
