@@ -7,6 +7,7 @@
  */
 `default_nettype none
 `include "util.v"
+`include "fifo.v"
 `include "uart.v"
 `include "gpio.v"
 `include "pll_96.v"
