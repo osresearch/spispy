@@ -67,7 +67,7 @@ module top(
 		if (counter[29:0] == 0) begin
 			val <= 0;
 		end else
-		if (uart_txd_ready && val != 21'h100000 && !uart_txd_strobe)
+		if (uart_txd_ready && val != 21'h100 && !uart_txd_strobe)
 		begin
 			uart_txd <= val[7:0];
 			uart_txd_strobe <= 1;
@@ -75,8 +75,8 @@ module top(
 		end
 	end
 
-	uart_tx_fifo #(.NUM(8)) txd(
-	//uart_tx txd(
+	//uart_tx_fifo #(.NUM(8)) txd(
+	uart_tx txd(
 		.clk(clk),
 		.reset(reset),
 		.baud_x1(clk_3mhz),

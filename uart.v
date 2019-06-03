@@ -1,6 +1,7 @@
 `ifndef _uart_v_
 `define _uart_v_
 `include "util.v"
+`include "fifo.v"
 
  /*
   * uart.v - High-speed serial support. Includes a baud generator, UART,
