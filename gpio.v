@@ -12,7 +12,7 @@ module gpio(
 	parameter PULLUP = 1'b0;
 
 	SB_IO #(
-		.PIN_TYPE(6'b1010_01), // Tristate
+		.PIN_TYPE(6'b1010_01), // Tristate, non-clocked, non-registered
 		.PULLUP(PULLUP),
 	) io(
 		.PACKAGE_PIN(pin),
