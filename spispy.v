@@ -7,6 +7,21 @@
  * This also configures the serial port at 3 Mb/s for the command
  * protocol in user.v.
  *
+ * FLCOMP in the IFD should be adjusted to use single SPI at 17 MHz.
+ * Offset 0x30.  SPI_FREQUENCY_17MHZ=6 SPI_FREQUENCY_20MHZ=0
+ * bit 30 = 0 == no dual fast read support
+ * bit 20 = 0 == no fast read support
+ * speed offsets 17, 21, 24, 27
+ * 0x00 10 00 24
+ *
+ * 20 17
+ * 1 000 00000000000100100
+ *
+ * minnow board dediprog pinout:
+ * VCC  GND
+ * CS   CLK
+ * MISO MOSI
+ * NC   NC
  */
 `default_nettype none
 `include "util.v"
@@ -39,9 +54,9 @@ module top(
 	wire serial_rxd_pin	= pmod1[1];
 
 	wire spi_clk_pin	= pmod2[0];
-	wire spi_miso_pin	= pmod2[1];
-	wire spi_mosi_pin	= pmod2[2];
-	wire spi_cs_pin		= pmod2[3];
+	wire spi_cs_pin		= pmod2[1];
+	wire spi_miso_pin	= pmod2[2];
+	wire spi_mosi_pin	= pmod2[3];
 
 
 	wire locked, clk_96mhz, clk;
@@ -130,7 +145,7 @@ module top(
 	reg [7:0] uart_txd;
 	reg uart_txd_strobe;
 
-`undef UART_FIFO
+`define UART_FIFO
 `ifdef UART_FIFO
 	uart_tx_fifo #(.NUM(512))
 `else
@@ -177,7 +192,7 @@ module top(
 	wire spi_mosi_in;
 	wire spi_miso_in;
 
-	gpio #(.PULLUP(1)) gpio_spi_cs(
+	gpio #(.PULLUP(0)) gpio_spi_cs(
 		.enable(spi_tristate & spi_cs_enable),
 		.pin(spi_cs_pin),
 		.in(spi_cs_in),
@@ -212,6 +227,8 @@ module top(
 	reg [7:0] spi_tx_data = 0;
 
 	spi_device spi(
+		.clk(clk),
+		.reset(reset),
 		.spi_clk(spi_clk_in),
 		.spi_cs(fake_spi_cs),
 		.spi_miso(spi_miso_out),
@@ -231,10 +248,18 @@ module top(
 	wire [7:0] user_txd_data;
 	wire user_txd_ready = !user_data_pending;
 
+	reg [5:0] count = 0;
 	always @(posedge clk)
 	begin
 		uart_txd_strobe <= 0;
 
+`ifdef 0
+		if (spi_rx_strobe) begin
+			uart_txd <= spi_rx_data;
+			uart_txd_strobe <= 1;
+			count <= count + 1;
+		end
+`else
 		if (spi_rx_strobe) begin
 			spi_data_buffer <= spi_rx_data;
 			spi_data_pending <= 1;
@@ -254,6 +279,7 @@ module top(
 			uart_txd_strobe <= 1;
 			user_data_pending <= 0;
 		end
+`endif
 	end
 
 
