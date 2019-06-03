@@ -10,6 +10,8 @@ module sdram_controller (
     input                      rd_enable,
     output                     rd_ready,
 
+    input                      refresh_inhibit,
+
     output                     busy,
     input                      rst_n,
     input                      clk,
@@ -186,6 +188,7 @@ always @ (posedge clk)
    if (state == REF_NOP2)
      refresh_cnt <= 10'b0;
    else
+   if (!refresh_inhibit)
      refresh_cnt <= refresh_cnt + 1'b1;
 
 
