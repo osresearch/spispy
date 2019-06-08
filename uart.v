@@ -189,6 +189,7 @@ module uart_tx_fifo(
 	output ready
 );
 	parameter NUM = 512;
+	parameter FREESPACE = 1;
 
 	wire uart_txd_ready; // high the UART is ready to take a new byte
 	reg uart_txd_strobe; // pulse when we have a new byte to transmit
@@ -207,7 +208,11 @@ module uart_tx_fifo(
 	wire fifo_available;
 	reg fifo_read_strobe;
 
-	fifo #(.NUM(NUM), .WIDTH(8)) buffer(
+	fifo #(
+		.WIDTH(8),
+		.NUM(NUM),
+		.FREESPACE(FREESPACE),
+	) buffer(
 		.clk(clk),
 		.reset(reset),
 		.write_data(data),
@@ -219,19 +224,23 @@ module uart_tx_fifo(
 	);
 
 	// drain the fifo into the serial port
+	reg [9:0] counter;
+
 	always @(posedge clk)
 	begin
 		uart_txd_strobe <= 0;
 		fifo_read_strobe <= 0;
+		counter <= counter + 1;
 
 		if (fifo_available
 		&&  uart_txd_ready
-		//&&  baud_x1
+		//&& counter == 0
 		&& !data_strobe // avoid dual port RAM if possible
 		&& !uart_txd_strobe // don't TX twice on one byte
 		) begin
 			fifo_read_strobe <= 1;
 			uart_txd_strobe <= 1;
+			counter <= 0;
 		end
 	end
 endmodule
