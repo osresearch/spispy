@@ -18,10 +18,10 @@
  * 1 000 00000000000100100
  *
  * minnow board dediprog pinout:
- * VCC  GND
- * CS   CLK
- * MISO MOSI
- * NC   NC
+ *             VCC  GND    Black
+ *      White  CS   CLK    Green / Orange
+ *      Brown  MISO MOSI   Yellow
+ *             NC   NC
  */
 `default_nettype none
 `include "util.v"
@@ -34,7 +34,12 @@
 
 module top(
 	input clk_100mhz,
-	inout [7:0] pmod1, // serial port
+	//inout [7:0] pmod1, // serial port
+	output pmod1_0,
+	input pmod1_1,
+	output pmod1_2,
+	output pmod1_3,
+	output pmod1_4,
 	inout [7:0] pmod2, // spi flash clip
 
 	// SDRAM physical interface
@@ -50,8 +55,8 @@ module top(
 	output sdram_cas
 );
 	// beaglewire pinouts
-	wire serial_txd_pin	= pmod1[0];
-	wire serial_rxd_pin	= pmod1[1];
+	wire serial_txd_pin	= pmod1_0; // pmod1[0];
+	wire serial_rxd_pin	= pmod1_1; // pmod1[1];
 
 	wire spi_clk_pin	= pmod2[0];
 	wire spi_cs_pin		= pmod2[1];
@@ -125,6 +130,7 @@ module top(
 		.out(1),
 	);
 
+
 	// generate a 3 MHz/12 MHz serial clock from the 96 MHz clock
 	// this is the 3 Mb/s maximum supported by the FTDI chip
 	// note that some Linux tools can have trouble keeping up with
@@ -135,8 +141,12 @@ module top(
 	divide_by_n #(.N(4)) div1(clk, reset, clk_12mhz);
 	divide_by_n #(.N(16)) div4(clk, reset, clk_3mhz);
 `else
-	divide_by_n #(.N(8)) div1(clk, reset, clk_12mhz);
-	divide_by_n #(.N(32)) div4(clk, reset, clk_3mhz);
+	//divide_by_n #(.N(8)) div1(clk, reset, clk_12mhz);
+	//divide_by_n #(.N(32)) div4(clk, reset, clk_3mhz);
+
+	// 1 megabaud
+	divide_by_n #(.N(24)) div1(clk, reset, clk_12mhz);
+	divide_by_n #(.N(96)) div4(clk, reset, clk_3mhz);
 `endif
 
 	wire [7:0] uart_rxd;
@@ -147,7 +157,10 @@ module top(
 
 `define UART_FIFO
 `ifdef UART_FIFO
-	uart_tx_fifo #(.NUM(16384))
+	uart_tx_fifo #(
+		.NUM(512),
+		.FREESPACE(15'h32), // ensure there is always space
+	)
 `else
 	uart_tx
 `endif
@@ -192,7 +205,7 @@ module top(
 	wire spi_mosi_in;
 	wire spi_miso_in;
 
-	gpio #(.PULLUP(0)) gpio_spi_cs(
+	gpio gpio_spi_cs(
 		.enable(spi_tristate & spi_cs_enable),
 		.pin(spi_cs_pin),
 		.in(spi_cs_in),
@@ -220,23 +233,57 @@ module top(
 		.out(spi_miso_out),
 	);
 
+/*
+	gpio gpio_debug1(
+		.enable(1), // always on
+		.pin(pmod1[2]),
+		.out(spi_cs_pin)
+	);
+	gpio gpio_debug2(
+		.enable(1), // always on
+		.pin(pmod1[3]),
+		.out(spi_clk_pin),
+	);
+*/
+	reg pmod1_2, pmod1_3, pmod1_4;
+	always @(posedge clk) begin
+		pmod1_2 <= spi_rx_strobe; //spi_cs_in;
+		pmod1_3 <= spi_clk_in;
+		pmod1_4 <= spi_mosi_in;
+	end
+	//assign pmod1_2 = spi_cs_in;
+	//assign pmod1_3 = spi_clk_in;
+
 	// remember that this is clocked in spi_clk domain,
 	// so it is not to be trusted.
-	wire spi_rx_strobe;
+	wire spi_rx_cmd_async;
+	wire spi_rx_async;
 	wire [7:0] spi_rx_data;
 	reg [7:0] spi_tx_data = 0;
 
 	spi_device spi(
-		.clk(clk),
-		.reset(reset),
+		//.clk(clk),
+		//.reset(reset),
 		.spi_clk(spi_clk_in),
 		.spi_cs(fake_spi_cs),
 		.spi_miso(spi_miso_out),
 		.spi_mosi(spi_mosi_in),
-		.spi_rx_strobe(spi_rx_strobe),
+		.spi_rx_strobe(spi_rx_async),
+		.spi_rx_cmd(spi_rx_cmd_async),
 		.spi_rx_data(spi_rx_data),
 		.spi_tx_data(spi_tx_data),
 	);
+
+	// spi_rx_cmd toggles in spi_clk domain, re-sync and strobify it
+	// spi_rx_cmd toggles in spi_clk domain, re-sync and strobify it
+	reg [1:0] spi_rx_cmd_sync;
+	reg [1:0] spi_rx_sync;
+	wire spi_rx_cmd = spi_rx_cmd_sync[1] != spi_rx_cmd_sync[0];
+	wire spi_rx_strobe = spi_rx_sync[1] != spi_rx_sync[0];
+	always @(posedge clk) begin
+		spi_rx_cmd_sync <= { spi_rx_cmd_sync[0], spi_rx_cmd_async };
+		spi_rx_sync <= { spi_rx_sync[0], spi_rx_async };
+	end
 
 	// serial output arbitrator between the user command
 	// parser and the spi device decoder
@@ -248,26 +295,75 @@ module top(
 	wire [7:0] user_txd_data;
 	wire user_txd_ready = !user_data_pending;
 
-	reg [5:0] count = 0;
+	reg [6:0] count = 0;
+	reg [6:0] logging = 0;
+	reg spi_log_this = 0; // don't add a new transaction if there is no space available
+
+	reg [31:0] spi_cmd;
+
 	always @(posedge clk)
 	begin
 		uart_txd_strobe <= 0;
 
-`ifdef 0
+`undef TEST
+`ifdef TEST
 		if (spi_rx_strobe) begin
 			uart_txd <= spi_rx_data;
 			uart_txd_strobe <= 1;
 			count <= count + 1;
 		end
 `else
-		if (spi_rx_strobe) begin
-			spi_data_buffer <= spi_rx_data;
-			spi_data_pending <= 1;
+		if (spi_rx_strobe)
+		begin
+			if (spi_rx_cmd)
+			begin
+				// if there is no space, then stop logging
+				spi_log_this <= uart_txd_ready;
+				//spi_data_pending <= uart_txd_ready;
+				//spi_data_buffer <= spi_rx_data;
+				count <= 1;
+				spi_cmd[31:24] <= spi_rx_data;
+				//spi_data_buffer <= 8'hA5; // spi_rx_data;
+			end else
+			if (count == 1 && spi_log_this) begin
+				spi_cmd[23:16] <= spi_rx_data;
+				count <= 2;
+			end else
+			if (count == 2 && spi_log_this) begin
+				spi_cmd[15: 8] <= spi_rx_data;
+				count <= 3;
+			end else
+			if (count == 3 && spi_log_this) begin
+				spi_cmd[ 7: 0] <= spi_rx_data;
+				count <= 4;
+				spi_data_pending <= 1;
+			end else begin
+				// data to process, but we ignore it
+			end
 		end else
-		if (spi_data_pending && uart_txd_ready) begin
-			uart_txd <= spi_data_buffer;
+		if (spi_data_pending) begin
+			if (count == 4)
+				uart_txd <= spi_cmd[31:24];
+			else
+			if (count == 3)
+				uart_txd <= spi_cmd[23:16];
+			else
+			if (count == 2)
+				uart_txd <= spi_cmd[15: 8];
+			else
+			if (count == 1) begin
+				uart_txd <= spi_cmd[ 7: 0];
+				spi_data_pending <= 0;
+			end
+
+			count <= count - 1;
 			uart_txd_strobe <= 1;
-			spi_data_pending <= 0;
+
+			// if we have received all zeros, don't output it
+			if (spi_cmd == 0) begin
+				spi_data_pending <= 0;
+				uart_txd_strobe <= 0;
+			end
 		end
 
 		if (user_txd_strobe) begin

@@ -28,49 +28,46 @@
  */
 
 module spi_device(
-	input	clk,
-	input	reset,
 	input	spi_clk,
 	input	spi_cs,
 	input	spi_mosi,
 	output	spi_miso,
 	output	spi_rx_strobe,
 	output [7:0] spi_rx_data,
-	input [7:0] spi_tx_data
+	input 	spi_tx_ready,
+	input [7:0] spi_tx_data,
+	output spi_rx_cmd // flops from 0 to 1
 );
-	reg [2:0] bit_count;
-	reg [7:0] mosi_reg;
-	reg [7:0] spi_rx_data;
+	reg [2:0]     bit_count;
+	reg [7:0]     mosi_reg;
+
+	// these are unlatched so that they are available immediately
+	//assign spi_rx_strobe = bit_count == 7;
 	wire [7:0] mosi_reg_next = { mosi_reg[6:0], spi_mosi };
-
-	// clock crossing strobe for the rx data
-	reg spi_rx_strobe_flop; // spi_clk domain
-	reg [2:0] spi_rx_strobe_sync; // clk domain
-	assign spi_rx_strobe = spi_rx_strobe_sync[2] != spi_rx_strobe_sync[1];
-	//assign spi_rx_strobe = spi_rx_strobe_flop;
-
-	always @(posedge clk)
-		spi_rx_strobe_sync <= {spi_rx_strobe_sync[1:0], spi_rx_strobe_flop};
-
-	reg [4:0] count;
+	reg [7:0] spi_rx_data;
+	reg cmd_started;
+	reg spi_rx_cmd;
+	reg spi_rx_strobe;
 
 	always @(posedge spi_clk or posedge spi_cs)
 	begin
 		if (spi_cs) begin
 			// anytime the spi_cs goes high, reset the bit count
 			bit_count <= 0;
-			mosi_reg <= 0;
+			cmd_started <= 0;
 		end else
 		begin
-			// shift in the rx data on the rising edge of clk
+			// shift in the rx data on the rising edge
 			bit_count <= bit_count + 1;
 			mosi_reg <= mosi_reg_next;
 
-			if (bit_count == 7) begin
+			if (bit_count == 7)
+			begin
+				if (!cmd_started)
+					spi_rx_cmd <= !spi_rx_cmd;
 				spi_rx_data <= mosi_reg_next;
-				//spi_rx_data <= "0" + count;
-				count <= count + 1;
-				spi_rx_strobe_flop <= !spi_rx_strobe_flop;
+				spi_rx_strobe <= !spi_rx_strobe;
+				cmd_started <= 1;
 			end
 		end
 	end
@@ -79,7 +76,6 @@ module spi_device(
 		// shift out the tx data on the falling edge
 		spi_miso <= spi_tx_data[7-bit_count];
 	end
-
 endmodule
 
 `endif
