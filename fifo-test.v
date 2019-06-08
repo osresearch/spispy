@@ -49,8 +49,10 @@ module top(
 	divide_by_n #(.N(4)) div1(clk, reset, clk_12mhz);
 	divide_by_n #(.N(16)) div4(clk, reset, clk_3mhz);
 `else
-	divide_by_n #(.N(8)) div1(clk, reset, clk_12mhz);
-	divide_by_n #(.N(32)) div4(clk, reset, clk_3mhz);
+	//divide_by_n #(.N(8)) div1(clk, reset, clk_12mhz);
+	//divide_by_n #(.N(32)) div4(clk, reset, clk_3mhz);
+	divide_by_n #(.N(24)) div1(clk, reset, clk_12mhz);
+	divide_by_n #(.N(96)) div4(clk, reset, clk_3mhz);
 `endif
 
 	reg [7:0] uart_txd;
@@ -72,7 +74,7 @@ module top(
 	wire data_available, space_available;
 	reg derror;
 
-	fifo #(.NUM(8)) f(
+	fifo #(.NUM(8), .FREESPACE(3)) f(
 		.clk(clk),
 		.reset(fifo_reset),
 		.werror(werror),
