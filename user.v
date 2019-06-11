@@ -198,7 +198,7 @@ module user_command_parser(
 		if (mode == MODE_WR) begin
 			if (msg_len == 0) begin
 				mode <= MODE_WAIT;
-				uart_txd <= "W";
+				uart_txd <= "w";
 				uart_txd_strobe <= 1;
 			end else
 			if (wr_pending
