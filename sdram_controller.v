@@ -4,14 +4,15 @@
 /*
  * SDRAM interface
  *
- * This is the GSOC version, which has some problems like losing
- * wr/rd commands if they occur during the refresh cycle.
+ * This is a specialized SDRAM interface for the SPI flash emulator
+ * that can do things like pause the refresh cycle during read commands,
+ * start pre-activating pages as soon as some bits of the address are
+ * available, etc.
  *
- * Need to try porting my updated version and re-testing now
- * that the uart issues have been fixed.
  */
 
 module sdram_controller (
+    // logical interface
     input  [HADDR_WIDTH-1:0]   wr_addr,
     input  [7:0]               wr_data,
     input                      wr_enable,
@@ -20,12 +21,17 @@ module sdram_controller (
     input                      rd_enable,
     output                     rd_ready,
 
-    input                      refresh_inhibit,
+    input                      refresh_inhibit, // hold off refreshing
+    input                      pause_cas, // wait activation, re-read haddr before CAS
 
     output                     busy,
     input                      rst_n,
     input                      clk,
 
+    output [7:0]               rd_data_raw,
+    output                     rd_ready_raw,
+
+    // physical interface
     output [SDRADDR_WIDTH-1:0] addr,
     output [BANK_WIDTH-1:0]    bank_addr,
     inout  [7:0]               data,
@@ -122,11 +128,16 @@ reg [3:0] state_cnt_nxt;
 reg [4:0] next;
 
 assign {clock_enable, cs_n, ras_n, cas_n, we_n} = command[7:3];
-// state[4] will be set if mode is read/write
+// state[4] will be set if mode is read/write, otherwise send NOP
 assign bank_addr      = (state[4]) ? bank_addr_r : command[2:1];
 assign addr           = (state[4] | state == INIT_LOAD) ? addr_r : { {SDRADDR_WIDTH-11{1'b0}}, command[0], 10'd0 };
 
 wire [7:0] data_in_from_buffer;
+
+// un-registered values available to skip a clock cycle
+assign rd_data_raw = data_in_from_buffer;
+assign rd_ready_raw = state == READ_READ;
+
 //Tri-State buffer controll
 SB_IO # (
     .PIN_TYPE(6'b1010_01),
@@ -183,7 +194,7 @@ always @ (posedge clk)
 
     busy <= state != IDLE || next != IDLE; // state[4];
 
-    if (rd_enable)
+    if (rd_enable || pause_cas)
       haddr_r <= rd_addr;
     else if (wr_enable)
       haddr_r <= wr_addr;
@@ -248,7 +259,8 @@ begin
      //                                       R  A  EUR
      //                                       S  S-3Q ST
      //                                       T  654L210
-     addr_r = {{SDRADDR_WIDTH-10{1'b0}}, 10'b1000110000};
+     //addr_r = {{SDRADDR_WIDTH-10{1'b0}}, 10'b1000110000}; // CAS=3
+     addr_r = {{SDRADDR_WIDTH-10{1'b0}}, 10'b1000100000}; // CAS=2
      end
 end
 
@@ -364,9 +376,12 @@ begin
             state_cnt_nxt = 4'd1;
             end
           READ_NOP1:
-            begin
-            next = READ_CAS;
-            command_nxt = CMD_READ;
+            if (pause_cas) begin
+              // if the user has requested a hold, wait here
+              next = READ_NOP1;
+            end else begin
+              next = READ_CAS;
+              command_nxt = CMD_READ;
             end
           READ_CAS:
             begin
