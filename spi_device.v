@@ -48,6 +48,7 @@ module spi_device(
 	reg cmd_started;
 	reg spi_rx_cmd;
 	reg spi_rx_strobe;
+	reg spi_miso;
 
 	always @(posedge spi_clk or posedge spi_cs)
 	begin
