@@ -386,7 +386,7 @@ begin
           READ_CAS:
             begin
             next = READ_NOP2;
-            state_cnt_nxt = 4'd1;
+            //state_cnt_nxt = 4'd1;
             end
           READ_NOP2:
             begin
