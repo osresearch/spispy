@@ -27,6 +27,7 @@
 `include "util.v"
 `include "uart.v"
 `include "gpio.v"
+`include "pll_120.v"
 `include "pll_96.v"
 `include "sdram_controller.v"
 `include "user.v"
@@ -67,7 +68,12 @@ module top(
 
 	wire locked, clk_96mhz, clk;
 	wire reset = !locked;
+`undef CLK120
+`ifdef CLK120
+	pll_120 pll(clk_100mhz, clk_96mhz, locked);
+`else
 	pll_96 pll(clk_100mhz, clk_96mhz, locked);
+`endif
 	assign clk = clk_96mhz;
 
 	parameter ADDR_BITS = 25; // 32 MB SDRAM chip
@@ -92,9 +98,12 @@ module top(
 	wire user_sd_refresh_inhibit;
 
 	// sdram logical interface
+	wire sd_pause_cas;
 	wire [ADDR_BITS-1:0] sd_addr = spi_critical ? spi_sd_addr : user_sd_addr;
 	wire [7:0] sd_wr_data = spi_critical ? spi_sd_wr_data : user_sd_wr_data;
 	wire [7:0] sd_rd_data;
+	wire [7:0] sd_rd_data_raw;
+	wire sd_rd_ready_raw;
 	wire sd_we = spi_critical ? spi_sd_we : user_sd_we;
 	wire sd_enable = spi_critical ? spi_sd_enable : user_sd_enable;
 	wire sd_refresh_inhibit = spi_critical ? spi_sd_refresh_inhibit : user_sd_refresh_inhibit;
@@ -120,6 +129,7 @@ module top(
 
 		// logical interface
 		.refresh_inhibit(sd_refresh_inhibit),
+		.pause_cas(sd_pause_cas),
 		.wr_addr(sd_addr),
 		.wr_enable(sd_enable & sd_we),
 		.wr_data(sd_wr_data),
@@ -127,6 +137,8 @@ module top(
 		.rd_enable(sd_enable & !sd_we),
 		.rd_data(sd_rd_data),
 		.rd_ready(sd_rd_ready),
+		.rd_data_raw(sd_rd_data_raw),
+		.rd_ready_raw(sd_rd_ready_raw),
 		.busy(sd_busy),
 	);
 
@@ -153,17 +165,19 @@ module top(
 	// this data rate; xxd -g1 for instance will drop bytes on
 	// long bursts (more than 1KB).
 	wire clk_3mhz, clk_12mhz;
-`ifdef CLK48
-	divide_by_n #(.N(4)) div1(clk, reset, clk_12mhz);
-	divide_by_n #(.N(16)) div4(clk, reset, clk_3mhz);
-`else
 	//divide_by_n #(.N(8)) div1(clk, reset, clk_12mhz);
 	//divide_by_n #(.N(32)) div4(clk, reset, clk_3mhz);
 
-	// 1 megabaud
+`ifdef CLK120
+	// 1 megabaud @ 120 MHz
+	divide_by_n #(.N(30)) div1(clk, reset, clk_12mhz);
+	divide_by_n #(.N(120)) div4(clk, reset, clk_3mhz);
+`else
+	// 1 megabaud @ 96 MHz
 	divide_by_n #(.N(24)) div1(clk, reset, clk_12mhz);
 	divide_by_n #(.N(96)) div4(clk, reset, clk_3mhz);
 `endif
+
 
 	wire [7:0] uart_rxd;
 	wire uart_rxd_strobe;
@@ -270,7 +284,8 @@ module top(
 		pmod1_5 <= spi_miso_in;
 	end
 */
-	assign pmod1_2 = spi_cs_in;
+	reg trigger = 0;
+	assign pmod1_2 = trigger; // spi_cs_in;
 	assign pmod1_3 = spi_clk_in;
 	assign pmod1_4 = spi_miso_out;
 	assign pmod1_5 = spi_miso_in;
@@ -302,6 +317,8 @@ module top(
 	reg [1:0] spi_rx_cmd_sync;
 	reg [1:0] spi_rx_sync;
 	reg [1:0] spi_cs_sync;
+	//wire spi_rx_cmd = spi_rx_cmd_sync[0] != spi_rx_cmd_async;
+	//wire spi_rx_strobe = spi_rx_sync[0] != spi_rx_async;
 	wire spi_rx_cmd = spi_rx_cmd_sync[1] != spi_rx_cmd_sync[0];
 	wire spi_rx_strobe = spi_rx_sync[1] != spi_rx_sync[0];
 	always @(posedge clk) begin
@@ -327,7 +344,12 @@ module top(
 
 	reg [31:0] spi_cmd;
 	reg spi_rd_cmd;
-	reg spi_rd_pending;
+	reg spi_first_byte;
+
+	// release the pause on the same cycle as spi_rx_strobe goes high and
+	// count is equal to 3.
+	assign sd_pause_cas = spi_critical && spi_rd_cmd &&
+		( count < 3 || (count == 3 && !spi_rx_strobe) );
 
 	always @(posedge clk)
 	begin
@@ -351,7 +373,6 @@ module top(
 				count <= 1;
 				spi_cmd[31:24] <= spi_rx_data;
 				spi_rd_cmd <= (spi_rx_data == 8'h03);
-				spi_rd_pending <= 0;
 
 				// Anytime the SPI CS line is asserted, take control
 				// of the SD interface
@@ -366,37 +387,59 @@ module top(
 			if (count == 2) begin
 				spi_cmd[15: 8] <= spi_rx_data;
 				count <= 3;
-				spi_tx_data <= 8'hF6;
+				spi_tx_data <= 8'hFE;
+
+				// we have enough to start the SDRAM activation
+				// SDRAM should not be busy since we've paused
+				// refresh and asserted the priority flag
+				if (spi_rd_cmd) begin
+					spi_sd_addr <= { 1'b0, spi_cmd[23:16], spi_rx_data, 8'h00 };
+					//sd_pause_cas <= 1;
+					spi_sd_enable <= 1;
+				end
 			end else
 			if (count == 3) begin
 				spi_cmd[ 7: 0] <= spi_rx_data;
 				count <= 4;
 				spi_data_pending <= 1;
 
-				// we have the full address to process, read it
-				spi_sd_addr <= { 1'b0, spi_cmd[23:8], spi_rx_data };
-				if (spi_rd_cmd) begin
-					if (sd_busy)
-						spi_rd_pending <= 1;
-					else
-						spi_sd_enable <= 1;
-				end
+				// default to pull the pin high
+				// this will show a glitch if the new data is not
+				// available on time.
 				spi_tx_data <= 8'hFF;
+
+				// we have the full address to read, release the
+				// CAS pause and let it finish the read command
+				if (spi_rd_cmd) begin
+					spi_sd_addr <= { 1'b0, spi_cmd[23:8], spi_rx_data };
+					//trigger <= ( { spi_cmd[23:8], spi_rx_data } == 24'h10);
+					// pause will be turned off automatically
+					//sd_pause_cas <= 0;
+					spi_first_byte <= 1;
+				end
 			end else begin
-				// data to process, but we ignore it
-				// should clock in a new byte from the SDRAM
+				// clock out the most recently read SDRAM data
+				// it should be ready, since it was started at least
+				// 8 SPI clocks ago
+				spi_tx_data <= sd_rd_data;
+
+				// start a new read in case they continue this burst
+				spi_sd_addr <= spi_sd_addr + 1;
+				spi_sd_enable <= 1;
 			end
 		end else
-		if (spi_rd_pending && !sd_busy) begin
-			// memory bus is free, start a read (probably too late)
-			// should never happen
-			spi_rd_pending <= 0;
+		if (sd_rd_ready_raw && spi_first_byte) begin
+			// the sdram has produced data ready for this first byte,
+			// clock it to the SPI bus immediately and start a new
+			// read (which will be clocked out when this one is done)
+			spi_tx_data <= sd_rd_data_raw;
+			spi_first_byte <= 0;
+			spi_sd_addr <= spi_sd_addr + 1;
 			spi_sd_enable <= 1;
-		end else
-		if (sd_rd_ready) begin
-			// the sdram has produced data, clock it to the SPI bus
-			spi_tx_data <= sd_rd_data;
-			spi_tx_data <= 8'h00;
+
+			trigger <= (spi_sd_addr == 25'h00000010);
+			spi_tx_data <= 8'h0F;
+			//spi_tx_data <= 8'h00;
 		end
 		if (spi_data_pending) begin
 			if (count == 4)
@@ -423,9 +466,12 @@ module top(
 			end
 		end else
 		if (spi_cs_in) begin
-			// no longer asserted
+			// no longer asserted, release our locks
 			spi_critical <= 0;
+			//sd_pause_cas <= 0;
 			spi_tx_data <= 8'hFF;
+			trigger <= 0;
+			spi_first_byte <= 0;
 		end
 
 		if (user_txd_strobe) begin
