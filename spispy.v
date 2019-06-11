@@ -40,6 +40,7 @@ module top(
 	output pmod1_2,
 	output pmod1_3,
 	output pmod1_4,
+	output pmod1_5,
 	inout [7:0] pmod2, // spi flash clip
 
 	// SDRAM physical interface
@@ -67,23 +68,38 @@ module top(
 	wire locked, clk_96mhz, clk;
 	wire reset = !locked;
 	pll_96 pll(clk_100mhz, clk_96mhz, locked);
-//`define CLK48
-`ifdef CLK48
-	always @(posedge clk_96mhz) clk <= !clk;
-`else
 	assign clk = clk_96mhz;
-`endif
+
+	parameter ADDR_BITS = 25; // 32 MB SDRAM chip
+
+	// arbitrate between the user commands and the SPI bus when
+	// we're in a critcal section.
+	reg spi_critical;
+	reg [ADDR_BITS-1:0] spi_sd_addr;
+	wire [7:0] spi_sd_wr_data = 0;
+	reg spi_sd_enable;
+	wire spi_sd_we = 0;
+	wire spi_sd_busy = sd_busy;
+	wire spi_rd_ready = spi_critical ? sd_rd_ready : 0;
+	wire spi_sd_refresh_inhibit = spi_critical;
+
+	wire [ADDR_BITS-1:0] user_sd_addr;
+	wire [7:0] user_sd_wr_data;
+	wire user_sd_enable;
+	wire user_sd_we;
+	wire user_sd_busy = spi_critical ? 1 : sd_busy;
+	wire user_rd_ready = spi_critical ? 0 : sd_rd_ready;
+	wire user_sd_refresh_inhibit;
 
 	// sdram logical interface
-	parameter ADDR_BITS = 25; // 32 MB SDRAM chip
-	wire [ADDR_BITS-1:0] sd_addr;
-	wire [7:0] sd_wr_data;
+	wire [ADDR_BITS-1:0] sd_addr = spi_critical ? spi_sd_addr : user_sd_addr;
+	wire [7:0] sd_wr_data = spi_critical ? spi_sd_wr_data : user_sd_wr_data;
 	wire [7:0] sd_rd_data;
-	wire sd_we;
-	wire sd_enable;
-	wire sd_rd_ready;
-	wire sd_refresh_inhibit;
+	wire sd_we = spi_critical ? spi_sd_we : user_sd_we;
+	wire sd_enable = spi_critical ? spi_sd_enable : user_sd_enable;
+	wire sd_refresh_inhibit = spi_critical ? spi_sd_refresh_inhibit : user_sd_refresh_inhibit;
 
+	wire sd_rd_ready;
 	wire sd_busy;
 	assign sdram_clk = clk;
 
@@ -245,12 +261,20 @@ module top(
 		.out(spi_clk_pin),
 	);
 */
-	reg pmod1_2, pmod1_3, pmod1_4;
+/*
+	reg pmod1_2, pmod1_3; // , pmod1_4, pmod1_5;
 	always @(posedge clk) begin
-		pmod1_2 <= spi_rx_strobe; //spi_cs_in;
-		pmod1_3 <= spi_clk_in;
-		pmod1_4 <= spi_mosi_in;
+		//pmod1_2 <= spi_rx_strobe; //spi_cs_in;
+		pmod1_3 <= spi_critical;
+		pmod1_4 <= spi_miso_out;
+		pmod1_5 <= spi_miso_in;
 	end
+*/
+	assign pmod1_2 = spi_cs_in;
+	assign pmod1_3 = spi_clk_in;
+	assign pmod1_4 = spi_miso_out;
+	assign pmod1_5 = spi_miso_in;
+
 	//assign pmod1_2 = spi_cs_in;
 	//assign pmod1_3 = spi_clk_in;
 
@@ -275,14 +299,15 @@ module top(
 	);
 
 	// spi_rx_cmd toggles in spi_clk domain, re-sync and strobify it
-	// spi_rx_cmd toggles in spi_clk domain, re-sync and strobify it
 	reg [1:0] spi_rx_cmd_sync;
 	reg [1:0] spi_rx_sync;
+	reg [1:0] spi_cs_sync;
 	wire spi_rx_cmd = spi_rx_cmd_sync[1] != spi_rx_cmd_sync[0];
 	wire spi_rx_strobe = spi_rx_sync[1] != spi_rx_sync[0];
 	always @(posedge clk) begin
 		spi_rx_cmd_sync <= { spi_rx_cmd_sync[0], spi_rx_cmd_async };
 		spi_rx_sync <= { spi_rx_sync[0], spi_rx_async };
+		spi_cs_sync <= { spi_cs_sync[0], spi_cs_sync };
 	end
 
 	// serial output arbitrator between the user command
@@ -291,6 +316,7 @@ module top(
 	reg spi_data_pending;
 	reg [7:0] user_data_buffer;
 	reg user_data_pending;
+	reg spi_critical;
 	wire user_txd_strobe;
 	wire [7:0] user_txd_data;
 	wire user_txd_ready = !user_data_pending;
@@ -300,11 +326,14 @@ module top(
 	reg spi_log_this = 0; // don't add a new transaction if there is no space available
 
 	reg [31:0] spi_cmd;
+	reg spi_rd_cmd;
+	reg spi_rd_pending;
 
 	always @(posedge clk)
 	begin
 		uart_txd_strobe <= 0;
 
+		spi_sd_enable <= 0;
 `undef TEST
 `ifdef TEST
 		if (spi_rx_strobe) begin
@@ -319,28 +348,56 @@ module top(
 			begin
 				// if there is no space, then stop logging
 				spi_log_this <= uart_txd_ready;
-				//spi_data_pending <= uart_txd_ready;
-				//spi_data_buffer <= spi_rx_data;
 				count <= 1;
 				spi_cmd[31:24] <= spi_rx_data;
-				//spi_data_buffer <= 8'hA5; // spi_rx_data;
+				spi_rd_cmd <= (spi_rx_data == 8'h03);
+				spi_rd_pending <= 0;
+
+				// Anytime the SPI CS line is asserted, take control
+				// of the SD interface
+				spi_critical <= 1;
+				spi_tx_data <= 8'hF0;
 			end else
-			if (count == 1 && spi_log_this) begin
+			if (count == 1) begin
 				spi_cmd[23:16] <= spi_rx_data;
 				count <= 2;
+				spi_tx_data <= 8'hF2;
 			end else
-			if (count == 2 && spi_log_this) begin
+			if (count == 2) begin
 				spi_cmd[15: 8] <= spi_rx_data;
 				count <= 3;
+				spi_tx_data <= 8'hF6;
 			end else
-			if (count == 3 && spi_log_this) begin
+			if (count == 3) begin
 				spi_cmd[ 7: 0] <= spi_rx_data;
 				count <= 4;
 				spi_data_pending <= 1;
+
+				// we have the full address to process, read it
+				spi_sd_addr <= { 1'b0, spi_cmd[23:8], spi_rx_data };
+				if (spi_rd_cmd) begin
+					if (sd_busy)
+						spi_rd_pending <= 1;
+					else
+						spi_sd_enable <= 1;
+				end
+				spi_tx_data <= 8'hFF;
 			end else begin
 				// data to process, but we ignore it
+				// should clock in a new byte from the SDRAM
 			end
 		end else
+		if (spi_rd_pending && !sd_busy) begin
+			// memory bus is free, start a read (probably too late)
+			// should never happen
+			spi_rd_pending <= 0;
+			spi_sd_enable <= 1;
+		end else
+		if (sd_rd_ready) begin
+			// the sdram has produced data, clock it to the SPI bus
+			spi_tx_data <= sd_rd_data;
+			spi_tx_data <= 8'h00;
+		end
 		if (spi_data_pending) begin
 			if (count == 4)
 				uart_txd <= spi_cmd[31:24];
@@ -364,6 +421,11 @@ module top(
 				spi_data_pending <= 0;
 				uart_txd_strobe <= 0;
 			end
+		end else
+		if (spi_cs_in) begin
+			// no longer asserted
+			spi_critical <= 0;
+			spi_tx_data <= 8'hFF;
 		end
 
 		if (user_txd_strobe) begin
@@ -393,13 +455,13 @@ module top(
 		.uart_txd_strobe(user_txd_strobe),
 		.uart_txd_ready(user_txd_ready),
 		// SDRAM
-		.sd_refresh_inhibit(sd_refresh_inhibit),
-		.sd_addr(sd_addr),
-		.sd_wr_data(sd_wr_data),
+		.sd_refresh_inhibit(user_sd_refresh_inhibit),
+		.sd_addr(user_sd_addr),
+		.sd_wr_data(user_sd_wr_data),
 		.sd_rd_data(sd_rd_data),
 		.sd_rd_ready(sd_rd_ready),
-		.sd_we(sd_we),
-		.sd_enable(sd_enable),
-		.sd_busy(sd_busy),
+		.sd_we(user_sd_we),
+		.sd_enable(user_sd_enable),
+		.sd_busy(user_sd_busy),
 	);
 endmodule
