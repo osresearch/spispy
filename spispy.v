@@ -173,9 +173,9 @@ module top(
 	divide_by_n #(.N(30)) div1(clk, reset, clk_12mhz);
 	divide_by_n #(.N(120)) div4(clk, reset, clk_3mhz);
 `else
-	// 1 megabaud @ 96 MHz
-	divide_by_n #(.N(24)) div1(clk, reset, clk_12mhz);
-	divide_by_n #(.N(96)) div4(clk, reset, clk_3mhz);
+	// 3 megabaud @ 96 MHz
+	divide_by_n #(.N(8)) div1(clk, reset, clk_12mhz);
+	divide_by_n #(.N(32)) div4(clk, reset, clk_3mhz);
 `endif
 
 
