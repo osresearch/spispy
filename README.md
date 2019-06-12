@@ -61,7 +61,7 @@ it won't be able to answer quickly enough.  Additionally, DRAM requires
 a refresh cycle that takes it offline during the refresh, which adds a
 random latency.
 
-![SDRAM read waveform](images/dram-read.jpg)
+![SDRAM read waveform](images/dram-read.png)
 
 These difficulties can be overcome with an FPGA using a custom DRAM
 controller.  The FPGA is able to inhibit refresh cycles during the SPI
