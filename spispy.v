@@ -349,12 +349,13 @@ module top(
 	reg [31:0] spi_cmd;
 	reg spi_rd_cmd;
 	reg spi_first_byte;
+	reg spi_start_read;
 
 	reg [ADDR_BITS-1:0] spi_sd_addr_reg;
 
 	assign spi_sd_addr[24] = 0;
 	assign spi_sd_addr[23:16] = spi_sd_addr_reg[23:16];
-	assign spi_sd_addr[15: 8] = count == 3 ? spi_rx_data : spi_sd_addr_reg[15:8];
+	assign spi_sd_addr[15: 8] = spi_sd_addr_reg[15:8];
 	assign spi_sd_addr[ 7: 0] = spi_first_byte ? spi_rx_data : spi_sd_addr_reg[7:0];
 
 	// release the pause on the same cycle as spi_rx_strobe goes high and
@@ -387,6 +388,7 @@ module top(
 				count <= 1;
 				spi_cmd[31:24] <= spi_rx_data;
 				spi_rd_cmd <= (spi_rx_data == 8'h03);
+				spi_sd_addr_reg <= ~0;
 
 				// Anytime the SPI CS line is asserted, take control
 				// of the SD interface
@@ -395,19 +397,22 @@ module top(
 			end else
 			if (count == 1) begin
 				spi_cmd[23:16] <= spi_rx_data;
+				spi_sd_addr_reg[23:16] <= spi_rx_data;
 				count <= 2;
 				spi_tx_data <= 8'hF2;
 			end else
 			if (count == 2) begin
 				spi_cmd[15: 8] <= spi_rx_data;
+				spi_sd_addr_reg[15:8] <= spi_rx_data;
 				count <= 3;
 				spi_tx_data <= 8'hFE;
 
 				// we have enough to start the SDRAM activation
 				// SDRAM should not be busy since we've paused
 				// refresh and asserted the priority flag
+				// sd_pause_cas will be asserted by combinatorial
+				// logic so that it does not take a cycle to unset
 				if (spi_rd_cmd) begin
-					spi_sd_addr_reg <= { 1'b0, spi_cmd[23:16], spi_rx_data, 8'h00 };
 					//sd_pause_cas <= 1;
 					spi_sd_enable <= 1;
 					trigger <= 1;
@@ -416,6 +421,7 @@ module top(
 			end else
 			if (count == 3) begin
 				spi_cmd[ 7: 0] <= spi_rx_data;
+				spi_sd_addr_reg[7:0] <= spi_rx_data;
 				count <= 4;
 				spi_data_pending <= 1;
 
@@ -423,11 +429,11 @@ module top(
 				// this will show a glitch if the new data is not
 				// available on time.
 				spi_tx_data <= 8'hFF;
+				spi_miso <= 8'hFF;
 
 				// we have the full address to read, release the
 				// CAS pause and let it finish the read command
 				if (spi_rd_cmd) begin
-					spi_sd_addr_reg <= { 1'b0, spi_cmd[23:8], spi_rx_data };
 					trigger <= ( { spi_cmd[23:8], spi_rx_data } != 24'h10);
 					// pause will be turned off automatically
 					//sd_pause_cas <= 0;
@@ -440,21 +446,30 @@ module top(
 				spi_miso <= sd_rd_data;
 
 				// start a new read in case they continue this burst
-				spi_sd_addr_reg <= spi_sd_addr_reg + 1;
+				//spi_sd_addr_reg <= spi_sd_addr_reg + 1;
+				spi_sd_addr_reg[7:0] <= spi_sd_addr_reg[7:0] + 1;
 				spi_sd_enable <= 1;
 			end
 		end else
 		if (sd_rd_ready_raw && spi_first_byte) begin
 			// the sdram has produced data ready for this first byte,
-			// clock it to the SPI bus immediately and start a new
-			// read (which will be clocked out when this one is done)
+			// clock it to the SPI bus immediately
 			spi_tx_data <= sd_rd_data_raw;
 			spi_miso <= sd_rd_data_raw;
 			spi_first_byte <= 0;
-			spi_sd_addr_reg <= spi_sd_addr_reg + 1;
+
+			// can't start a new read on this cycle (the SDRAM is
+			// still busy since this was triggered on the raw output).
+			spi_start_read <= 1;
+			trigger <= 1; // (spi_sd_addr == 25'h00000010);
+		end else
+		if (spi_start_read && !sd_busy) begin
+			// start a new read (which will be clocked out when
+			// this byte is done)
+			spi_sd_addr_reg[7:0] <= spi_sd_addr_reg[7:0] + 1;
 			spi_sd_enable <= 1;
 
-			trigger <= 1; // (spi_sd_addr == 25'h00000010);
+			spi_start_read <= 0;
 			//spi_tx_data <= 8'h0F;
 			//spi_tx_data <= 8'h00;
 		end
@@ -501,7 +516,7 @@ module top(
 		end
 
 		if (spi_clk_falling)
-			spi_miso <= spi_miso << 1;
+			spi_miso <= spi_miso << 1 | 1'b1;
 `endif
 	end
 
