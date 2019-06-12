@@ -98,7 +98,7 @@ module top(
 	wire user_sd_refresh_inhibit;
 
 	// sdram logical interface
-	wire sd_pause_cas;
+	reg sd_pause_cas;
 	wire [ADDR_BITS-1:0] sd_addr = spi_critical ? spi_sd_addr : user_sd_addr;
 	wire [7:0] sd_wr_data = spi_critical ? spi_sd_wr_data : user_sd_wr_data;
 	wire [7:0] sd_rd_data;
@@ -293,43 +293,27 @@ module top(
 	//assign pmod1_2 = spi_cs_in;
 	//assign pmod1_3 = spi_clk_in;
 
-	// remember that this is clocked in spi_clk domain,
-	// so it is not to be trusted.
-	wire spi_rx_cmd_async;
-	wire spi_rx_async;
+	wire spi_rx_cmd;
+	wire spi_rx_strobe;
 	wire [7:0] spi_rx_data;
 	reg [7:0] spi_tx_data = 0;
 
 	spi_device spi(
-		//.clk(clk),
-		//.reset(reset),
+		.clk(clk),
+		.reset(reset),
 		.spi_clk(spi_clk_in),
 		.spi_cs(fake_spi_cs),
-		//.spi_miso(spi_miso_out),
+		.spi_miso(spi_miso_out),
 		.spi_mosi(spi_mosi_in),
-		.spi_rx_strobe(spi_rx_async),
-		.spi_rx_cmd(spi_rx_cmd_async),
+		.spi_rx_strobe(spi_rx_strobe),
+		.spi_rx_cmd(spi_rx_cmd),
 		.spi_rx_data(spi_rx_data),
-		.spi_tx_data(spi_tx_data),
-	);
 
-	// spi_rx_cmd toggles in spi_clk domain, re-sync and strobify it
-	reg [1:0] spi_rx_cmd_sync;
-	reg [1:0] spi_rx_sync;
-	reg [1:0] spi_cs_sync;
-	reg [1:0] spi_clk_sync;
-	//wire spi_rx_cmd = spi_rx_cmd_sync[0] != spi_rx_cmd_async;
-	//wire spi_rx_strobe = spi_rx_sync[0] != spi_rx_async;
-	wire spi_rx_cmd = spi_rx_cmd_sync[1] != spi_rx_cmd_sync[0];
-	wire spi_rx_strobe = spi_rx_sync[1] != spi_rx_sync[0];
-	wire spi_clk_falling = spi_clk_sync[1] && !spi_clk_sync[0];
-	wire spi_clk_rising = !spi_clk_sync[1] && spi_clk_sync[0];
-	always @(posedge clk) begin
-		spi_rx_cmd_sync <= { spi_rx_cmd_sync[0], spi_rx_cmd_async };
-		spi_rx_sync <= { spi_rx_sync[0], spi_rx_async };
-		spi_cs_sync <= { spi_cs_sync[0], spi_cs_sync };
-		spi_clk_sync <= { spi_clk_sync[0], spi_clk_in };
-	end
+		// ensure that the raw data from the SDRAM is available
+		// ASAP on the first byte of a read command
+		.spi_tx_data(spi_first_byte ? sd_rd_data_raw : spi_tx_data),
+		//.spi_tx_data(spi_tx_data),
+	);
 
 	// serial output arbitrator between the user command
 	// parser and the spi device decoder
@@ -351,34 +335,35 @@ module top(
 	reg spi_first_byte;
 	reg spi_start_read;
 
-	reg [ADDR_BITS-1:0] spi_sd_addr_reg;
+	reg [ADDR_BITS-1:0] spi_sd_addr_reg = 0;
 
+/*
 	assign spi_sd_addr[24] = 0;
 	assign spi_sd_addr[23:16] = spi_sd_addr_reg[23:16];
 	assign spi_sd_addr[15: 8] = spi_sd_addr_reg[15:8];
 	assign spi_sd_addr[ 7: 0] = spi_first_byte ? spi_rx_data : spi_sd_addr_reg[7:0];
+*/
+	assign spi_sd_addr = spi_sd_addr_reg;
 
 	// release the pause on the same cycle as spi_rx_strobe goes high and
 	// count is equal to 3.
+/*
 	assign sd_pause_cas = spi_critical && spi_rd_cmd &&
 		( count < 3 || (count == 3 && !spi_rx_strobe) );
-
-	reg [7:0] spi_miso;
-	assign spi_miso_out = spi_first_byte ? sd_rd_data_raw[7] : spi_miso[7];
+*/
 
 	always @(posedge clk)
 	begin
 		uart_txd_strobe <= 0;
 		spi_sd_enable <= 0;
 
-`undef TEST
-`ifdef TEST
-		if (spi_rx_strobe) begin
-			uart_txd <= spi_rx_data;
-			uart_txd_strobe <= 1;
-			count <= count + 1;
-		end
-`else
+		if (spi_cs_in) begin
+			// no longer asserted, release our locks
+			spi_critical <= 0;
+			sd_pause_cas <= 0;
+			spi_tx_data <= 8'hFF;
+			spi_first_byte <= 0;
+		end else
 		if (spi_rx_strobe)
 		begin
 			if (spi_rx_cmd)
@@ -388,7 +373,7 @@ module top(
 				count <= 1;
 				spi_cmd[31:24] <= spi_rx_data;
 				spi_rd_cmd <= (spi_rx_data == 8'h03);
-				spi_sd_addr_reg <= ~0;
+				spi_sd_addr_reg[23:0] <= ~0;
 
 				// Anytime the SPI CS line is asserted, take control
 				// of the SD interface
@@ -413,15 +398,15 @@ module top(
 				// sd_pause_cas will be asserted by combinatorial
 				// logic so that it does not take a cycle to unset
 				if (spi_rd_cmd) begin
-					//sd_pause_cas <= 1;
+					sd_pause_cas <= 1;
 					spi_sd_enable <= 1;
 					trigger <= 1;
-					spi_first_byte <= 1;
 				end
 			end else
 			if (count == 3) begin
 				spi_cmd[ 7: 0] <= spi_rx_data;
 				spi_sd_addr_reg[7:0] <= spi_rx_data;
+				spi_cmd <= { 7'h00, spi_sd_addr_reg };
 				count <= 4;
 				spi_data_pending <= 1;
 
@@ -429,21 +414,21 @@ module top(
 				// this will show a glitch if the new data is not
 				// available on time.
 				spi_tx_data <= 8'hFF;
-				spi_miso <= 8'hFF;
 
 				// we have the full address to read, release the
 				// CAS pause and let it finish the read command
 				if (spi_rd_cmd) begin
 					trigger <= ( { spi_cmd[23:8], spi_rx_data } != 24'h10);
+					spi_first_byte <= 1;
 					// pause will be turned off automatically
-					//sd_pause_cas <= 0;
+					sd_pause_cas <= 0;
+					//spi_sd_enable <= 1;
 				end
 			end else begin
 				// clock out the most recently read SDRAM data
 				// it should be ready, since it was started at least
 				// 8 SPI clocks ago
-				spi_tx_data <= sd_rd_data;
-				spi_miso <= sd_rd_data;
+				spi_tx_data <= sd_rd_data_raw;
 
 				// start a new read in case they continue this burst
 				//spi_sd_addr_reg <= spi_sd_addr_reg + 1;
@@ -455,7 +440,6 @@ module top(
 			// the sdram has produced data ready for this first byte,
 			// clock it to the SPI bus immediately
 			spi_tx_data <= sd_rd_data_raw;
-			spi_miso <= sd_rd_data_raw;
 			spi_first_byte <= 0;
 
 			// can't start a new read on this cycle (the SDRAM is
@@ -463,15 +447,13 @@ module top(
 			spi_start_read <= 1;
 			trigger <= 1; // (spi_sd_addr == 25'h00000010);
 		end else
-		if (spi_start_read && !sd_busy) begin
+		if (spi_start_read && !spi_sd_busy) begin
 			// start a new read (which will be clocked out when
 			// this byte is done)
 			spi_sd_addr_reg[7:0] <= spi_sd_addr_reg[7:0] + 1;
 			spi_sd_enable <= 1;
 
 			spi_start_read <= 0;
-			//spi_tx_data <= 8'h0F;
-			//spi_tx_data <= 8'h00;
 		end
 		if (spi_data_pending) begin
 			if (count == 4)
@@ -496,13 +478,6 @@ module top(
 				spi_data_pending <= 0;
 				uart_txd_strobe <= 0;
 			end
-		end else
-		if (spi_cs_in) begin
-			// no longer asserted, release our locks
-			spi_critical <= 0;
-			//sd_pause_cas <= 0;
-			spi_tx_data <= 8'hFF;
-			spi_first_byte <= 0;
 		end
 
 		if (user_txd_strobe) begin
@@ -514,10 +489,6 @@ module top(
 			uart_txd_strobe <= 1;
 			user_data_pending <= 0;
 		end
-
-		if (spi_clk_falling)
-			spi_miso <= spi_miso << 1 | 1'b1;
-`endif
 	end
 
 
