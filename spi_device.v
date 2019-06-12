@@ -2,11 +2,7 @@
 `define _spi_device_v_
 
 /** \file
- * SPI device clocked in the spi_clk domain.
- *
- * If the system clock were sufficiently fast this could be done in
- * the other domain, but until then it is clocked by the SPI bus
- * itself.
+ * SPI device clocked in the clk domain.
  *
  * Inputs are unregistered so that they can be processed on the
  * rising edge of the 8th bit, allowing new data to be available
@@ -74,6 +70,7 @@ module spi_device(
 
 	reg [2:0] output_bit;
 	assign spi_miso = spi_tx_data[output_bit];
+	//reg spi_miso;
 
 	always @(posedge clk)
 	begin
@@ -109,6 +106,8 @@ module spi_device(
 			// shift out data on the falling edge
 			output_bit <= output_bit - 1;
 		end
+
+		//spi_miso <= spi_tx_data[output_bit];
 	end
 
 endmodule
