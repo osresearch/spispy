@@ -326,8 +326,7 @@ module top(
 	wire [7:0] user_txd_data;
 	wire user_txd_ready = !user_data_pending;
 
-	reg [6:0] count = 0;
-	reg [6:0] logging = 0;
+	reg [2:0] spi_count = 0;
 	reg spi_log_this = 0; // don't add a new transaction if there is no space available
 
 	reg [31:0] spi_cmd;
@@ -337,6 +336,9 @@ module top(
 
 	reg [ADDR_BITS-1:0] spi_sd_addr_reg = 0;
 
+	// the lowest byte in the address is hard-wired to the incoming SPI
+	// data so that we don't spend a clock-cycle propagating this into the
+	// register.  it will be set on the next clock for addition.
 	assign spi_sd_addr[24] = 0;
 	assign spi_sd_addr[23:16] = spi_sd_addr_reg[23:16];
 	assign spi_sd_addr[15: 8] = spi_sd_addr_reg[15:8];
@@ -346,7 +348,7 @@ module top(
 	// release the pause on the same cycle as spi_rx_strobe goes high and
 	// count is equal to 3.
 	assign sd_pause_cas = spi_critical && spi_rd_cmd &&
-		( count < 3 || (count == 3 && !spi_rx_strobe) );
+		( spi_count < 3'h3 || (spi_count == 3'h3 && !spi_rx_strobe) );
 
 	always @(posedge clk)
 	begin
@@ -366,7 +368,7 @@ module top(
 			begin
 				// if there is no space, then stop logging
 				spi_log_this <= uart_txd_ready;
-				count <= 1;
+				spi_count <= 1;
 				spi_cmd[31:24] <= spi_rx_data;
 				spi_rd_cmd <= (spi_rx_data == 8'h03);
 				spi_sd_addr_reg[23:0] <= ~0;
@@ -376,16 +378,16 @@ module top(
 				spi_critical <= 1;
 				spi_tx_data <= 8'hF0;
 			end else
-			if (count == 1) begin
+			if (spi_count == 1) begin
 				spi_cmd[23:16] <= spi_rx_data;
 				spi_sd_addr_reg[23:16] <= spi_rx_data;
-				count <= 2;
+				spi_count <= 2;
 				spi_tx_data <= 8'hF2;
 			end else
-			if (count == 2) begin
+			if (spi_count == 2) begin
 				spi_cmd[15: 8] <= spi_rx_data;
 				spi_sd_addr_reg[15:8] <= spi_rx_data;
-				count <= 3;
+				spi_count <= 3;
 				spi_tx_data <= 8'hFE;
 
 				// we have enough to start the SDRAM activation
@@ -400,11 +402,11 @@ module top(
 					spi_first_byte <= 1;
 				end
 			end else
-			if (count == 3) begin
+			if (spi_count == 3) begin
 				spi_cmd[ 7: 0] <= spi_rx_data;
 				spi_sd_addr_reg[7:0] <= spi_rx_data;
 				//spi_cmd <= { 7'h00, spi_sd_addr_reg };
-				count <= 4;
+				spi_count <= 4;
 				spi_data_pending <= 4;
 
 				// default to pull the pin high
