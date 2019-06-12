@@ -120,8 +120,8 @@ module user_command_parser(
 		end
 
 		MODE_CMD: begin
-			uart_txd <= uart_rxd;
-			uart_txd_strobe <= 1;
+			//uart_txd <= uart_rxd;
+			//uart_txd_strobe <= 1;
 			case(uart_rxd)
 			CMD_RD: begin
 				cmd_mode <= MODE_RD;
