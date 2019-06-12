@@ -98,7 +98,7 @@ module top(
 	wire user_sd_refresh_inhibit;
 
 	// sdram logical interface
-	reg sd_pause_cas;
+	wire sd_pause_cas;
 	wire [ADDR_BITS-1:0] sd_addr = spi_critical ? spi_sd_addr : user_sd_addr;
 	wire [7:0] sd_wr_data = spi_critical ? spi_sd_wr_data : user_sd_wr_data;
 	wire [7:0] sd_rd_data;
@@ -318,7 +318,7 @@ module top(
 	// serial output arbitrator between the user command
 	// parser and the spi device decoder
 	reg [7:0] spi_data_buffer;
-	reg spi_data_pending;
+	reg [2:0] spi_data_pending;
 	reg [7:0] user_data_buffer;
 	reg user_data_pending;
 	reg spi_critical;
@@ -337,20 +337,16 @@ module top(
 
 	reg [ADDR_BITS-1:0] spi_sd_addr_reg = 0;
 
-/*
 	assign spi_sd_addr[24] = 0;
 	assign spi_sd_addr[23:16] = spi_sd_addr_reg[23:16];
 	assign spi_sd_addr[15: 8] = spi_sd_addr_reg[15:8];
 	assign spi_sd_addr[ 7: 0] = spi_first_byte ? spi_rx_data : spi_sd_addr_reg[7:0];
-*/
-	assign spi_sd_addr = spi_sd_addr_reg;
+	//assign spi_sd_addr = spi_sd_addr_reg;
 
 	// release the pause on the same cycle as spi_rx_strobe goes high and
 	// count is equal to 3.
-/*
 	assign sd_pause_cas = spi_critical && spi_rd_cmd &&
 		( count < 3 || (count == 3 && !spi_rx_strobe) );
-*/
 
 	always @(posedge clk)
 	begin
@@ -360,7 +356,7 @@ module top(
 		if (spi_cs_in) begin
 			// no longer asserted, release our locks
 			spi_critical <= 0;
-			sd_pause_cas <= 0;
+			//sd_pause_cas <= 0;
 			spi_tx_data <= 8'hFF;
 			spi_first_byte <= 0;
 		end else
@@ -398,17 +394,18 @@ module top(
 				// sd_pause_cas will be asserted by combinatorial
 				// logic so that it does not take a cycle to unset
 				if (spi_rd_cmd) begin
-					sd_pause_cas <= 1;
+					//sd_pause_cas <= 1;
 					spi_sd_enable <= 1;
 					trigger <= 1;
+					spi_first_byte <= 1;
 				end
 			end else
 			if (count == 3) begin
 				spi_cmd[ 7: 0] <= spi_rx_data;
 				spi_sd_addr_reg[7:0] <= spi_rx_data;
-				spi_cmd <= { 7'h00, spi_sd_addr_reg };
+				//spi_cmd <= { 7'h00, spi_sd_addr_reg };
 				count <= 4;
-				spi_data_pending <= 1;
+				spi_data_pending <= 4;
 
 				// default to pull the pin high
 				// this will show a glitch if the new data is not
@@ -419,16 +416,14 @@ module top(
 				// CAS pause and let it finish the read command
 				if (spi_rd_cmd) begin
 					trigger <= ( { spi_cmd[23:8], spi_rx_data } != 24'h10);
-					spi_first_byte <= 1;
 					// pause will be turned off automatically
-					sd_pause_cas <= 0;
-					//spi_sd_enable <= 1;
+					//sd_pause_cas <= 0;
 				end
 			end else begin
 				// clock out the most recently read SDRAM data
 				// it should be ready, since it was started at least
 				// 8 SPI clocks ago
-				spi_tx_data <= sd_rd_data_raw;
+				spi_tx_data <= sd_rd_data;
 
 				// start a new read in case they continue this burst
 				//spi_sd_addr_reg <= spi_sd_addr_reg + 1;
@@ -455,22 +450,22 @@ module top(
 
 			spi_start_read <= 0;
 		end
-		if (spi_data_pending) begin
-			if (count == 4)
+		if (spi_data_pending && uart_txd_ready) begin
+			if (spi_data_pending == 4)
 				uart_txd <= spi_cmd[31:24];
 			else
-			if (count == 3)
+			if (spi_data_pending == 3)
 				uart_txd <= spi_cmd[23:16];
 			else
-			if (count == 2)
+			if (spi_data_pending == 2)
 				uart_txd <= spi_cmd[15: 8];
 			else
-			if (count == 1) begin
+			if (spi_data_pending == 1) begin
 				uart_txd <= spi_cmd[ 7: 0];
 				spi_data_pending <= 0;
 			end
 
-			count <= count - 1;
+			spi_data_pending <= spi_data_pending - 1;
 			uart_txd_strobe <= 1;
 
 			// if we have received all zeros, don't output it
