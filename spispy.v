@@ -56,6 +56,8 @@ module top(
 	output sdram_ras,
 	output sdram_cas
 );
+	localparam EMULATE = 0;
+
 	// beaglewire pinouts
 	wire serial_txd_pin	= pmod1_0; // pmod1[0];
 	wire serial_rxd_pin	= pmod1_1; // pmod1[1];
@@ -94,7 +96,7 @@ module top(
 	wire user_sd_enable;
 	wire user_sd_we;
 	wire user_sd_busy = spi_critical ? 1 : sd_busy;
-	wire user_rd_ready = spi_critical ? 0 : sd_rd_ready;
+	wire user_rd_ready = sd_rd_ready;
 	wire user_sd_refresh_inhibit;
 
 	// sdram logical interface
@@ -169,9 +171,9 @@ module top(
 	//divide_by_n #(.N(32)) div4(clk, reset, clk_3mhz);
 
 `ifdef CLK120
-	// 1 megabaud @ 120 MHz
-	divide_by_n #(.N(30)) div1(clk, reset, clk_12mhz);
-	divide_by_n #(.N(120)) div4(clk, reset, clk_3mhz);
+	// 3 megabaud @ 120 MHz
+	divide_by_n #(.N(10)) div1(clk, reset, clk_12mhz);
+	divide_by_n #(.N(40)) div4(clk, reset, clk_3mhz);
 `else
 	// 3 megabaud @ 96 MHz
 	divide_by_n #(.N(8)) div1(clk, reset, clk_12mhz);
@@ -237,7 +239,7 @@ module top(
 	wire spi_miso_in;
 
 	gpio gpio_spi_cs(
-		.enable(spi_cs_enable),
+		.enable(spi_cs_enable && EMULATE),
 		.pin(spi_cs_pin),
 		.in(spi_cs_in),
 		.out(spi_cs_out),
@@ -258,7 +260,7 @@ module top(
 	);
 
 	gpio gpio_spi_miso(
-		.enable(spi_cs_enable),
+		.enable(spi_cs_enable && EMULATE),
 		.pin(spi_miso_pin),
 		.in(spi_miso_in),
 		.out(spi_miso_out),
@@ -399,6 +401,9 @@ module top(
 			//sd_pause_cas <= 0;
 			spi_tx_data <= 8'hFF;
 			spi_first_byte <= 0;
+			if (spi_rd_cmd && spi_count == 4)
+				spi_data_pending <= 4;
+			spi_count <= 0;
 		end else
 		if (spi_rx_strobe)
 		begin
@@ -407,25 +412,31 @@ module top(
 				// if there is no space, then stop logging
 				spi_log_this <= uart_txd_ready;
 				spi_count <= 1;
-				spi_cmd[31:24] <= spi_rx_data;
-				spi_rd_cmd <= (spi_rx_data == 8'h03);
+				//spi_cmd[31:24] <= spi_rx_data;
 				spi_sd_addr_reg[23:0] <= ~0;
 
-				// Anytime the SPI CS line is asserted, take control
-				// of the SD interface
-				spi_critical <= 1;
+				// Anytime a SPI read command starts, assert
+				// exclusive access to the SD interface
+				if (spi_rx_data == 8'h03) begin
+					spi_critical <= 1;
+					spi_rd_cmd <= 1;
+				end else begin
+					spi_critical <= 0;
+					spi_rd_cmd <= 0;
+				end
+
 				spi_tx_data <= 8'hF0;
 				spi_tx_strobe <= 1;
 			end else
 			if (spi_count == 1) begin
-				spi_cmd[23:16] <= spi_rx_data;
+				spi_cmd[31:24] <= spi_rx_data;
 				spi_sd_addr_reg[23:16] <= spi_rx_data;
 				spi_count <= 2;
 				spi_tx_data <= 8'hF2;
 				spi_tx_strobe <= 1;
 			end else
 			if (spi_count == 2) begin
-				spi_cmd[15: 8] <= spi_rx_data;
+				spi_cmd[23:16] <= spi_rx_data;
 				spi_sd_addr_reg[15:8] <= spi_rx_data;
 				spi_count <= 3;
 				spi_tx_data <= 8'hFE;
@@ -441,14 +452,17 @@ module top(
 					spi_sd_enable <= 1;
 					trigger <= 1;
 					spi_first_byte <= 1;
+
+					// let's take over the MISO line
+					spi_cs_enable <= 1;
 				end
 			end else
 			if (spi_count == 3) begin
-				spi_cmd[ 7: 0] <= spi_rx_data;
+				spi_cmd[15: 8] <= spi_rx_data;
+				spi_cmd[ 7: 0] <= 0; // len
 				spi_sd_addr_reg[7:0] <= spi_rx_data;
 				//spi_cmd <= { 7'h00, spi_sd_addr_reg };
 				spi_count <= 4;
-				spi_data_pending <= 4;
 
 				// default to pull the pin high
 				// this will show a glitch if the new data is not
@@ -459,12 +473,9 @@ module top(
 				// we have the full address to read, release the
 				// CAS pause and let it finish the read command
 				if (spi_rd_cmd) begin
-					trigger <= ( { spi_cmd[23:8], spi_rx_data } != 24'h10);
+					trigger <= ( { spi_cmd[31:16], spi_rx_data } != 24'h1048);
 					// pause will be turned off automatically
 					//sd_pause_cas <= 0;
-
-					// let's take over the MISO line
-					spi_cs_enable <= 1;
 				end
 			end else begin
 				// clock out the most recently read SDRAM data
@@ -475,13 +486,17 @@ module top(
 
 				// start a new read in case they continue this burst
 				//spi_sd_addr_reg <= spi_sd_addr_reg + 1;
-				spi_sd_addr_reg[7:0] <= spi_sd_addr_reg[7:0] + 1;
+				spi_sd_addr_reg <= spi_sd_addr_reg + 1;
 				spi_sd_enable <= 1;
+
+				// track the number of bytes read
+				//spi_cmd[7:0] <= spi_cmd[7:0] + 1;
 			end
 		end else
 		if (sd_rd_ready_raw && spi_first_byte) begin
 			// the sdram has produced data ready for this first byte,
 			// clock it to the SPI bus immediately
+			spi_cmd[7:0] <= sd_rd_data_raw;
 			spi_tx_data <= sd_rd_data_raw;
 			spi_tx_strobe_immediate <= 1;
 
