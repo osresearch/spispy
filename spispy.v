@@ -297,22 +297,31 @@ module top(
 	wire spi_rx_strobe;
 	wire [7:0] spi_rx_data;
 	reg [7:0] spi_tx_data = 0;
+	reg spi_tx_strobe;
+	reg spi_tx_strobe_immediate;
+
+	// for timing reasons the top bit of the incoming SDRAM data is wired
+	// directly to the MISO line so that the read request can meet the
+	// timing requirements of the SPI bus.
+	wire spi_miso_out_clocked;
+	assign spi_miso_out = spi_first_byte
+		? sd_rd_data_raw[7]
+		: spi_miso_out_clocked;
 
 	spi_device spi(
 		.clk(clk),
 		.reset(reset),
 		.spi_clk(spi_clk_in),
 		.spi_cs(fake_spi_cs),
-		.spi_miso(spi_miso_out),
+		.spi_miso(spi_miso_out_clocked),
 		.spi_mosi(spi_mosi_in),
 		.spi_rx_strobe(spi_rx_strobe),
 		.spi_rx_cmd(spi_rx_cmd),
 		.spi_rx_data(spi_rx_data),
 
-		// ensure that the raw data from the SDRAM is available
-		// ASAP on the first byte of a read command
-		.spi_tx_data(spi_first_byte ? sd_rd_data_raw : spi_tx_data),
-		//.spi_tx_data(spi_tx_data),
+		.spi_tx_data(spi_tx_data),
+		.spi_tx_strobe(spi_tx_strobe),
+		.spi_tx_strobe_immediate(spi_tx_strobe_immediate),
 	);
 
 	// serial output arbitrator between the user command
@@ -354,6 +363,8 @@ module top(
 	begin
 		uart_txd_strobe <= 0;
 		spi_sd_enable <= 0;
+		spi_tx_strobe <= 0;
+		spi_tx_strobe_immediate <= 0;
 
 		if (spi_cs_in) begin
 			// no longer asserted, release our locks
@@ -377,18 +388,21 @@ module top(
 				// of the SD interface
 				spi_critical <= 1;
 				spi_tx_data <= 8'hF0;
+				spi_tx_strobe <= 1;
 			end else
 			if (spi_count == 1) begin
 				spi_cmd[23:16] <= spi_rx_data;
 				spi_sd_addr_reg[23:16] <= spi_rx_data;
 				spi_count <= 2;
 				spi_tx_data <= 8'hF2;
+				spi_tx_strobe <= 1;
 			end else
 			if (spi_count == 2) begin
 				spi_cmd[15: 8] <= spi_rx_data;
 				spi_sd_addr_reg[15:8] <= spi_rx_data;
 				spi_count <= 3;
 				spi_tx_data <= 8'hFE;
+				spi_tx_strobe <= 1;
 
 				// we have enough to start the SDRAM activation
 				// SDRAM should not be busy since we've paused
@@ -413,6 +427,7 @@ module top(
 				// this will show a glitch if the new data is not
 				// available on time.
 				spi_tx_data <= 8'hFF;
+				spi_tx_strobe <= 1;
 
 				// we have the full address to read, release the
 				// CAS pause and let it finish the read command
@@ -426,6 +441,7 @@ module top(
 				// it should be ready, since it was started at least
 				// 8 SPI clocks ago
 				spi_tx_data <= sd_rd_data;
+				spi_tx_strobe <= 1;
 
 				// start a new read in case they continue this burst
 				//spi_sd_addr_reg <= spi_sd_addr_reg + 1;
@@ -437,7 +453,7 @@ module top(
 			// the sdram has produced data ready for this first byte,
 			// clock it to the SPI bus immediately
 			spi_tx_data <= sd_rd_data_raw;
-			spi_first_byte <= 0;
+			spi_tx_strobe_immediate <= 1;
 
 			// can't start a new read on this cycle (the SDRAM is
 			// still busy since this was triggered on the raw output).
@@ -451,6 +467,7 @@ module top(
 			spi_sd_enable <= 1;
 
 			spi_start_read <= 0;
+			spi_first_byte <= 0;
 		end
 		if (spi_data_pending && uart_txd_ready) begin
 			if (spi_data_pending == 4)
