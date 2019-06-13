@@ -214,11 +214,12 @@ module top(
 	);
 
 	// SPI flash
+	// in controller mode all are outputs except miso
 	// in spispy mode all of them are inputs.
-	// in toctou mode the cs and miso are output;
+	// in emulation mode the cs and miso are in/out based on our mode
+	// in toctou mode they can all be in/out
 	// cs is driven high to deselect the flash chip
 	// and miso is driven with the fpga provided data
-	reg spi_tristate = 0;
 
 	// if we're faking the !CS pin (driving the output high)
 	// tell our SPI device that it is still selected.
@@ -236,7 +237,7 @@ module top(
 	wire spi_miso_in;
 
 	gpio gpio_spi_cs(
-		.enable(spi_tristate & spi_cs_enable),
+		.enable(spi_cs_enable),
 		.pin(spi_cs_pin),
 		.in(spi_cs_in),
 		.out(spi_cs_out),
@@ -257,7 +258,7 @@ module top(
 	);
 
 	gpio gpio_spi_miso(
-		.enable(spi_tristate & spi_cs_enable),
+		.enable(spi_cs_enable),
 		.pin(spi_miso_pin),
 		.in(spi_miso_in),
 		.out(spi_miso_out),
@@ -359,6 +360,27 @@ module top(
 	assign sd_pause_cas = spi_critical && spi_rd_cmd &&
 		( spi_count < 3'h3 || (spi_count == 3'h3 && !spi_rx_strobe) );
 
+	// track how long it has been since the last SPI clock transition
+	// this is necessary to detect when the host is no longer reading from us
+	// when clk_count == 0, it has been too long
+	reg [1:0] spi_clk_sync;
+	reg [7:0] spi_clk_count;
+	reg spi_clk_timeout;
+	always @(posedge clk)
+	begin
+		spi_clk_sync <= { spi_clk_sync[0], spi_clk_in };
+		spi_clk_timeout <= 0;
+
+		if (!spi_cs_enable
+		|| (spi_clk_sync[1] && !spi_clk_sync[0]))
+			spi_clk_count <= 20;
+		else
+		if (spi_clk_count == 0)
+			spi_clk_timeout <= 1;
+		else
+			spi_clk_count <= spi_clk_count - 1;
+	end
+
 	always @(posedge clk)
 	begin
 		uart_txd_strobe <= 0;
@@ -366,7 +388,12 @@ module top(
 		spi_tx_strobe <= 0;
 		spi_tx_strobe_immediate <= 0;
 
-		if (spi_cs_in) begin
+		if (spi_clk_timeout) begin
+			// too long without a clock, ensure that
+			// we do not hold control of the bus.
+			spi_cs_enable <= 0;
+		end else
+		if (fake_spi_cs) begin
 			// no longer asserted, release our locks
 			spi_critical <= 0;
 			//sd_pause_cas <= 0;
@@ -435,6 +462,9 @@ module top(
 					trigger <= ( { spi_cmd[23:8], spi_rx_data } != 24'h10);
 					// pause will be turned off automatically
 					//sd_pause_cas <= 0;
+
+					// let's take over the MISO line
+					//spi_cs_enable <= 1;
 				end
 			end else begin
 				// clock out the most recently read SDRAM data
