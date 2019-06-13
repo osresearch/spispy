@@ -373,7 +373,7 @@ module top(
 
 		if (!spi_cs_enable
 		|| (spi_clk_sync[1] && !spi_clk_sync[0]))
-			spi_clk_count <= 20;
+			spi_clk_count <= 7;
 		else
 		if (spi_clk_count == 0)
 			spi_clk_timeout <= 1;
@@ -464,7 +464,7 @@ module top(
 					//sd_pause_cas <= 0;
 
 					// let's take over the MISO line
-					//spi_cs_enable <= 1;
+					spi_cs_enable <= 1;
 				end
 			end else begin
 				// clock out the most recently read SDRAM data
