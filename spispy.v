@@ -101,9 +101,9 @@ module top(
 	wire debug_0 = spi_miso_in;
 	wire debug_1 = spi_clk_in;
 	reg trigger;
-	assign gp[26] = trigger;
-	assign gp[27] = debug_0;
-	assign gp[25] = debug_1;
+	TRELLIS_IO #(.DIR("OUTPUT")) debug0(.B(gp[26]), .I(trigger));
+	TRELLIS_IO #(.DIR("OUTPUT")) debug2(.B(gp[27]), .I(debug_0));
+	TRELLIS_IO #(.DIR("OUTPUT")) debug3(.B(gp[25]), .I(debug_1));
 
 	// serial port interface for talking to the host system
 	// 132 MHz clock / 48 == 3 megabaud
@@ -234,7 +234,8 @@ sdram_ctrl0 (
 	begin
 		uart_txd_strobe <= 0;
 		rd_timer <= rd_timer + 1;
-		trigger <= 0;
+		if (spi_cs_in)
+			trigger <= 0;
 
 		if (reset || sdram_reset) begin
 			wr_addr <= 0;
