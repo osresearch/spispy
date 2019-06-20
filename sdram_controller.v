@@ -103,7 +103,7 @@ localparam CMD_PALL = 8'b10010001,
 reg  [HADDR_WIDTH-1:0]   haddr_r;
 reg  [7:0]               wr_data_r;
 reg  [7:0]               rd_data_r;
-reg                      busy;
+//reg                      busy;
 reg                      data_mask_r;
 reg [SDRADDR_WIDTH-1:0]  addr_r;
 reg [BANK_WIDTH-1:0]     bank_addr_r;
@@ -150,6 +150,8 @@ SB_IO # (
 );
 
 assign rd_ready = rd_ready_r;
+assign busy = state != IDLE || next != IDLE; // state[4];
+
 
 // HOST INTERFACE
 // all registered on posedge
@@ -163,7 +165,7 @@ always @ (posedge clk)
     haddr_r <= {HADDR_WIDTH{1'b0}};
     wr_data_r <= 8'b0;
     rd_data_r <= 8'b0;
-    busy <= 1'b0;
+    //busy <= 1'b0;
     wr_enable_prev <= 1'b0;
     rd_enable_prev <= 1'b0;
     end
@@ -191,8 +193,6 @@ always @ (posedge clk)
       end
     else
       rd_ready_r <= 1'b0;
-
-    busy <= state != IDLE || next != IDLE; // state[4];
 
     if (rd_enable || pause_cas)
       haddr_r <= rd_addr;

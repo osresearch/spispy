@@ -75,7 +75,7 @@ module spi_device(
 `endif
 
 	reg [8:0] miso_reg; // 9 bits
-	assign spi_miso = miso_reg[8]; // current output is top bit
+	//assign spi_miso = miso_reg[8]; // current output is top bit
 
 	always @(posedge clk)
 	begin
@@ -120,7 +120,22 @@ module spi_device(
 		// re-load the output register and the output bit.
 		// this is used to fix up a transaction already in process
 		if (spi_tx_strobe_immediate)
-			miso_reg[8:0] <= { spi_tx_data, 1'b1 };
+			miso_reg[7:0] <= spi_tx_data;
+			//miso_reg[8:0] <= { spi_tx_data, 1'b1 };
+	end
+
+	reg [2:0] output_bit;
+	//assign spi_miso = miso_reg[output_bit];
+	reg spi_miso;
+	always @(negedge spi_clk or posedge spi_cs)
+	begin
+		if (spi_cs) begin
+			output_bit <= 7;
+			spi_miso <= 0;
+		end else begin
+			output_bit <= output_bit - 1;
+			spi_miso <= miso_reg[output_bit-1];
+		end
 	end
 
 endmodule

@@ -6,6 +6,7 @@ all: spispy.bin
 
 sdram-test.json: pll_96.v
 spispy.json: pll_96.v
+spispy.json: pll_200.v
 
 # use the BBB as an FPGA programmer since it can directly
 # toggle the SPI flash lines.

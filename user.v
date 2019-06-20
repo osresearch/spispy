@@ -60,6 +60,9 @@ module user_command_parser(
 		CMD_VERSION	= "V",
 		CMD_INVALID	= 8'hff;
 
+	// reads had better return by this time
+	reg [7:0] rd_counter;
+
 	always @(posedge clk)
 	begin
 		uart_txd_strobe <= 0;
@@ -71,6 +74,8 @@ module user_command_parser(
 			mode <= MODE_WAIT;
 			msg_len <= 0;
 			wr_pending <= 0;
+			rd_pending <= 0;
+			rd_counter <= 0;
 		end else
 		if (uart_rxd_strobe)
 		case(mode)
@@ -150,9 +155,12 @@ module user_command_parser(
 
 		MODE_WR: begin
 			// should check that we don't have a pending write
+			if (wr_pending) begin
+				uart_txd_strobe <= 1;
+				uart_txd <= "%";
+			end
 			sd_wr_data <= uart_rxd;
 			wr_pending <= 1;
-			sd_refresh_inhibit <= 1;
 		end
 
 		default: begin
@@ -193,6 +201,19 @@ module user_command_parser(
 				sd_we <= 0;
 				sd_addr <= addr;
 				rd_pending <= 1;
+				rd_counter <= 0;
+			end else
+			if (rd_pending)
+			begin
+				rd_counter <= rd_counter + 1;
+				if (rd_counter == 8'hFF) begin
+					// timed out on this read?
+					uart_txd <= 8'hAF;
+					uart_txd_strobe <= 1;
+					msg_len <= msg_len - 1;
+					addr <= addr + 1;
+					rd_pending <= 0;
+				end
 			end
 		end else
 		if (mode == MODE_WR) begin

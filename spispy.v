@@ -31,7 +31,7 @@
 `include "pll_96.v"
 `include "sdram_controller.v"
 `include "user.v"
-`include "spi_device.v"
+`include "spi200.v"
 
 module top(
 	input clk_100mhz,
@@ -42,6 +42,7 @@ module top(
 	output pmod1_3,
 	output pmod1_4,
 	output pmod1_5,
+	output pmod1_6,
 	inout [7:0] pmod2, // spi flash clip
 
 	// SDRAM physical interface
@@ -68,15 +69,19 @@ module top(
 	wire spi_mosi_pin	= pmod2[3];
 
 
-	wire locked, clk_96mhz, clk;
+	wire locked, clk;
 	wire reset = !locked;
 `undef CLK120
 `ifdef CLK120
-	pll_120 pll(clk_100mhz, clk_96mhz, locked);
+	wire clk_120mhz;
+	pll_120 pll120(clk_100mhz, clk_120mhz, locked);
+	assign clk = clk_120mhz;
 `else
-	pll_96 pll(clk_100mhz, clk_96mhz, locked);
+	wire clk_96mhz;
+	pll_96 pll96(clk_100mhz, clk_96mhz, locked);
+	//assign clk = clk_96mhz;
+	assign clk = clk_100mhz;
 `endif
-	assign clk = clk_96mhz;
 
 	parameter ADDR_BITS = 25; // 32 MB SDRAM chip
 
@@ -171,13 +176,23 @@ module top(
 	//divide_by_n #(.N(32)) div4(clk, reset, clk_3mhz);
 
 `ifdef CLK120
+/*
 	// 3 megabaud @ 120 MHz
 	divide_by_n #(.N(10)) div1(clk, reset, clk_12mhz);
 	divide_by_n #(.N(40)) div4(clk, reset, clk_3mhz);
+*/
+	// 1 megabaud @ 120 MHz
+	divide_by_n #(.N(30)) div1(clk, reset, clk_12mhz);
+	divide_by_n #(.N(120)) div4(clk, reset, clk_3mhz);
 `else
+/*
 	// 3 megabaud @ 96 MHz
 	divide_by_n #(.N(8)) div1(clk, reset, clk_12mhz);
 	divide_by_n #(.N(32)) div4(clk, reset, clk_3mhz);
+*/
+	// 1 megabaud @ 100 MHz
+	divide_by_n #(.N(25)) div1(clk, reset, clk_12mhz);
+	divide_by_n #(.N(100)) div4(clk, reset, clk_3mhz);
 `endif
 
 
@@ -238,7 +253,7 @@ module top(
 	wire spi_mosi_in;
 	wire spi_miso_in;
 
-	gpio gpio_spi_cs(
+	gpio #(.PULLUP(1)) gpio_spi_cs(
 		.enable(spi_cs_enable && EMULATE),
 		.pin(spi_cs_pin),
 		.in(spi_cs_in),
@@ -292,6 +307,7 @@ module top(
 	assign pmod1_3 = spi_clk_in;
 	assign pmod1_4 = spi_miso_out;
 	assign pmod1_5 = spi_miso_in;
+	assign pmod1_6 = spi_critical;
 
 	//assign pmod1_2 = spi_cs_in;
 	//assign pmod1_3 = spi_clk_in;
@@ -307,7 +323,9 @@ module top(
 	// directly to the MISO line so that the read request can meet the
 	// timing requirements of the SPI bus.
 	wire spi_miso_out_clocked;
-	assign spi_miso_out = spi_first_byte
+	reg spi_fast_first_bit;
+	assign spi_miso_out =
+		spi_fast_first_bit
 		? sd_rd_data_raw[7]
 		: spi_miso_out_clocked;
 
@@ -333,7 +351,6 @@ module top(
 	reg [2:0] spi_data_pending;
 	reg [7:0] user_data_buffer;
 	reg user_data_pending;
-	reg spi_critical;
 	wire user_txd_strobe;
 	wire [7:0] user_txd_data;
 	wire user_txd_ready = !user_data_pending;
@@ -343,7 +360,8 @@ module top(
 
 	reg [31:0] spi_cmd;
 	reg spi_rd_cmd;
-	reg spi_first_byte;
+	reg spi_first_bit; // has the first bit been read?
+	reg spi_first_byte; // are we sending the first byte?
 	reg spi_start_read;
 
 	reg [ADDR_BITS-1:0] spi_sd_addr_reg = 0;
@@ -367,6 +385,9 @@ module top(
 	// when clk_count == 0, it has been too long
 	reg [1:0] spi_clk_sync;
 	reg [7:0] spi_clk_count;
+	reg [2:0] spi_bit;
+	wire spi_clk_rising = !spi_clk_sync[1] && spi_clk_sync[0];
+	wire spi_clk_falling = spi_clk_sync[1] && !spi_clk_sync[0];
 	reg spi_clk_timeout;
 	always @(posedge clk)
 	begin
@@ -381,14 +402,34 @@ module top(
 			spi_clk_timeout <= 1;
 		else
 			spi_clk_count <= spi_clk_count - 1;
+
+		if (fake_spi_cs)
+			spi_bit <= 7;
+		else
+		if (spi_clk_falling)
+			spi_bit <= spi_bit - 1;
+
+		// take control of the first bit and hold it
+		if (fake_spi_cs)
+			spi_fast_first_bit <= 0;
+		else
+		if (spi_first_bit && !spi_fast_first_bit)
+			spi_fast_first_bit <= 1;
+		else
+		if (spi_fast_first_bit && spi_clk_falling && spi_bit == 7)
+			spi_fast_first_bit <= 0;
 	end
+
+
 
 	always @(posedge clk)
 	begin
 		uart_txd_strobe <= 0;
 		spi_sd_enable <= 0;
-		spi_tx_strobe <= 0;
-		spi_tx_strobe_immediate <= 0;
+		//spi_tx_strobe <= 0;
+		//spi_tx_strobe_immediate <= 0;
+		//spi_critical <= !fake_spi_cs;
+		trigger <= 0;
 
 		if (spi_clk_timeout) begin
 			// too long without a clock, ensure that
@@ -401,6 +442,7 @@ module top(
 			//sd_pause_cas <= 0;
 			spi_tx_data <= 8'hFF;
 			spi_first_byte <= 0;
+			spi_first_bit <= 0;
 			if (spi_rd_cmd && spi_count == 4)
 				spi_data_pending <= 4;
 			spi_count <= 0;
@@ -426,21 +468,21 @@ module top(
 				end
 
 				spi_tx_data <= 8'hF0;
-				spi_tx_strobe <= 1;
+				spi_tx_strobe <= ~spi_tx_strobe;
 			end else
 			if (spi_count == 1) begin
 				spi_cmd[31:24] <= spi_rx_data;
 				spi_sd_addr_reg[23:16] <= spi_rx_data;
 				spi_count <= 2;
 				spi_tx_data <= 8'hF2;
-				spi_tx_strobe <= 1;
+				spi_tx_strobe <= ~spi_tx_strobe;
 			end else
 			if (spi_count == 2) begin
 				spi_cmd[23:16] <= spi_rx_data;
 				spi_sd_addr_reg[15:8] <= spi_rx_data;
 				spi_count <= 3;
 				spi_tx_data <= 8'hFE;
-				spi_tx_strobe <= 1;
+				spi_tx_strobe <= ~spi_tx_strobe;
 
 				// we have enough to start the SDRAM activation
 				// SDRAM should not be busy since we've paused
@@ -450,7 +492,10 @@ module top(
 				if (spi_rd_cmd) begin
 					//sd_pause_cas <= 1;
 					spi_sd_enable <= 1;
-					trigger <= 1;
+					trigger <= (sd_busy ? 1 : 0);
+
+					// signal that we want the address to come
+					// direct from spi_rx_data
 					spi_first_byte <= 1;
 
 					// let's take over the MISO line
@@ -468,21 +513,27 @@ module top(
 				// this will show a glitch if the new data is not
 				// available on time.
 				spi_tx_data <= 8'hFF;
-				spi_tx_strobe <= 1;
+				spi_tx_strobe <= ~spi_tx_strobe;
 
 				// we have the full address to read, release the
 				// CAS pause and let it finish the read command
 				if (spi_rd_cmd) begin
-					trigger <= ( { spi_cmd[31:16], spi_rx_data } != 24'h1048);
+					spi_first_bit <= 1;
+
 					// pause will be turned off automatically
 					//sd_pause_cas <= 0;
 				end
 			end else begin
+				// if sd_first_byte is still set, this is an error
+				// it means that the SDRAM never returned a result.
+				//trigger <= (spi_first_byte != 0);
+				spi_first_byte <= 0;
+
 				// clock out the most recently read SDRAM data
 				// it should be ready, since it was started at least
 				// 8 SPI clocks ago
 				spi_tx_data <= sd_rd_data;
-				spi_tx_strobe <= 1;
+				spi_tx_strobe <= ~spi_tx_strobe;
 
 				// start a new read in case they continue this burst
 				//spi_sd_addr_reg <= spi_sd_addr_reg + 1;
@@ -493,17 +544,19 @@ module top(
 				//spi_cmd[7:0] <= spi_cmd[7:0] + 1;
 			end
 		end else
-		if (sd_rd_ready_raw && spi_first_byte) begin
+		if (sd_rd_ready_raw && spi_first_bit) begin
 			// the sdram has produced data ready for this first byte,
 			// clock it to the SPI bus immediately
+			trigger <= ( spi_sd_addr[23:0] == 24'h0010);
+
 			spi_cmd[7:0] <= sd_rd_data_raw;
 			spi_tx_data <= sd_rd_data_raw;
-			spi_tx_strobe_immediate <= 1;
+			spi_tx_strobe_immediate <= ~spi_tx_strobe_immediate;
 
 			// can't start a new read on this cycle (the SDRAM is
 			// still busy since this was triggered on the raw output).
 			spi_start_read <= 1;
-			trigger <= 1; // (spi_sd_addr == 25'h00000010);
+			//trigger <= 1; // (spi_sd_addr == 25'h00000010);
 		end else
 		if (spi_start_read && !spi_sd_busy) begin
 			// start a new read (which will be clocked out when
@@ -512,7 +565,7 @@ module top(
 			spi_sd_enable <= 1;
 
 			spi_start_read <= 0;
-			spi_first_byte <= 0;
+			spi_first_bit <= 0;
 		end
 		if (spi_data_pending && uart_txd_ready) begin
 			if (spi_data_pending == 4)

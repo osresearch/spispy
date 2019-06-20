@@ -1,7 +1,7 @@
 /*
  * Create a serial bridge from the Teensy to the FPGA.
  */
-#define BAUD 3000000
+#define BAUD 1000000
 
 void setup()
 {
