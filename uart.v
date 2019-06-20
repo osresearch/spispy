@@ -29,6 +29,7 @@
 
 
 `include "util.v"
+`include "fifo.v"
 
 module uart_tx(
 	input clk,
@@ -153,22 +154,68 @@ module uart(
 );
 	// todo: rx/tx could share a single clock
 	parameter DIVISOR = 40; // must be divisible by 4 for rx clock
+	parameter FIFO = 0;
+	parameter FREESPACE = 1;
 
 	uart_rx #(.DIVISOR(DIVISOR/4)) rx(
 		.clk(clk),
 		.reset(reset),
+		// physical
 		.serial(serial_rxd),
+		// logical
 		.data_strobe(rxd_strobe),
 		.data(rxd),
 	);
 
+	generate
+	if(FIFO == 0) begin
+		wire [7:0] serial_txd_data = txd;
+		wire serial_txd_ready = txd_ready;
+		wire serial_txd_strobe = txd_strobe;
+	end else begin
+		reg serial_txd_strobe;
+		wire serial_txd_ready;
+		wire [7:0] serial_txd_data;
+
+		wire fifo_available;
+		fifo #(
+			.FREESPACE(FREESPACE),
+			.NUM(FIFO),
+			.WIDTH(8),
+		) tx_fifo(
+			.clk(clk),
+			.reset(reset),
+			// input side to logic
+			.space_available(txd_ready),
+			.write_data(txd),
+			.write_strobe(txd_strobe),
+			// output side to serial uart
+			.data_available(fifo_available),
+			.read_data(serial_txd_data),
+			.read_strobe(serial_txd_strobe),
+		);
+
+		always @(posedge clk) begin
+			if (fifo_available
+			&&  serial_txd_ready
+			&& !serial_txd_strobe
+			&& !reset)
+				serial_txd_strobe <= 1;
+			else
+				serial_txd_strobe <= 0;
+		end
+	end
+	endgenerate
+
 	uart_tx #(.DIVISOR(DIVISOR)) tx(
 		.clk(clk),
 		.reset(reset),
+		// physical
 		.serial(serial_txd),
-		.data(txd),
-		.data_strobe(txd_strobe),
-		.ready(txd_ready),
+		// logical
+		.data(serial_txd_data),
+		.data_strobe(serial_txd_strobe),
+		.ready(serial_txd_ready),
 	);
 endmodule
 
