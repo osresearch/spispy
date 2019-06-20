@@ -114,7 +114,9 @@ module top(
 	wire [7:0] uart_rxd;
 
 	uart #(
-		.DIVISOR(44)
+		.DIVISOR(44),
+		.FIFO(512),
+		.FREESPACE(16),
 	) uart_i(
 		.clk(clk),
 		.reset(reset),
@@ -225,6 +227,8 @@ sdram_ctrl0 (
 	reg [4:0] rd_pending;
 
 	reg [10:0] rd_timer;
+	reg [7:0] count;
+	reg spi_log_this;
 
 	always @(posedge clk)
 	begin
@@ -244,8 +248,18 @@ sdram_ctrl0 (
 		end else
 		if (spi_rx_strobe)
 		begin
+			if (spi_rx_cmd) begin
+				count <= 0;
+				spi_log_this <= uart_txd_ready && spi_rx_data == 8'h03;
+			end else begin
+				count <= count + 1;
+			end
+
 			trigger <= spi_rx_cmd;
-			if (uart_txd_ready)
+
+			if (uart_txd_ready
+			&& (count < 3 || spi_rx_cmd)
+			&& spi_log_this)
 			begin
 				uart_txd <= spi_rx_data;
 				uart_txd_strobe <= 1;
