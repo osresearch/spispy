@@ -183,4 +183,24 @@ module pulse_stretcher(clk, reset, in, out);
 endmodule
 
 
+/*
+ * Clock crossing strobe.
+ *
+ * The input should switch polarity to signal changes,
+ * which will be translated into single clock strobes in the clk domain.
+ */
+module strobe_sync(
+	input clk,
+	input flop,
+	output strobe
+);
+	parameter DELAY = 1;
+	reg [DELAY:0] sync;
+	assign strobe = sync[DELAY] != sync[DELAY-1];
+
+	always @(posedge clk)
+		sync <= { sync[DELAY-1:0], flop };
+endmodule
+
+
 `endif
