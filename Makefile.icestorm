@@ -1,87 +1,46 @@
-DEVICE-upduino ?= up5k
-FOOTPRINT-upduino ?= sg48
-PIN_SRC-upduino ?= upduino_v2.pcf
-MHZ-upduino ?= 48
+#
+# ECP5 flash emulator
+# Builds with nextpnr-ecp5 and prjtrellis from git
+#
+IDCODE ?= 0x21111043 # 12f
 
-DEVICE-icebreaker ?= up5k
-FOOTPRINT-icebreaker ?= sg48
-PIN_SRC-icebreaker ?= icebreaker.pcf
-
-DEVICE-tinyfpga := lp8k
-FOOTPRINT-tinyfpga := cm81
-PIN_SRC-tinyfpga := tinyfpga-bx.pcf
-
-DEVICE-tomu := up5k
-FOOTPRINT-tomu := uwg30
-PIN_SRC-tomu := tomu.pcf
-MHZ-upduino ?= 48
-
-DEVICE-beaglewire := hx8k
-FOOTPRINT-beaglewire := tq144:4k
-MHZ-beaglewire := 100
-PIN_SRC-beaglewire := beaglewire.pcf
-
-USB_DEV ?= 1-1:1.0
-BOARD ?= upduino
-DEVICE := $(DEVICE-$(BOARD))
-FOOTPRINT := $(FOOTPRINT-$(BOARD))
-PIN_SRC := $(PIN_SRC-$(BOARD))
-MHZ := $(MHZ-$(BOARD))
-
-
-PNR ?= $(ICEPATH)nextpnr-ice40
-.SECONDARY:
-
-%.flash: %.bin
-	$(ICEPATH)iceprog -e 128 # Force a reset
-	$(ICEPATH)iceprog $<
-	echo $(USB_DEV) | tee /sys/bus/usb/drivers/ftdi_sio/bind
-
-%.bin: %.asc
-	$(ICEPATH)icepack $< $@
+PRJTRELLIS ?= ../prjtrellis/libtrellis/
 
 %.json: %.v
-	$(ICEPATH)yosys \
-		-q \
-		-p 'read_verilog $<' \
-		-p 'synth_ice40 -top top -json $@' \
+	yosys \
+		-p "synth_ecp5 -json $@" \
 		-E .$(basename $@).d \
+		$<
 
-%.asc: $(PIN_SRC) %.json
-	$(PNR) \
-		--$(DEVICE) \
-		--package $(FOOTPRINT) \
-		--asc $@ \
-		--pcf $(PIN_SRC) \
-		--json $(basename $@).json \
+%.config: %.json
+	nextpnr-ecp5 \
+		--json $< \
+		--textcfg $@ \
+		--lpf ulx3s_v20.lpf \
+		--timing-allow-fail \
+		--25k
 
-%.gui: %.json
-	$(PNR) --gui --$(DEVICE) --pcf $(PIN_SRC) --json $<
+%.bit: %.config
+	ecppack --idcode $(IDCODE) $< $@
 
-%.bin: %.asc
-	$(ICEPATH)icepack $^ $@
+%.svf: %.config
+	ecppack --idcode $(IDCODE) --input $< --svf $@
 
-# Generate a desired MHz pll from the system MHz
+%.flash: %.bit
+	ujprog $<
+%.terminal: %.bit
+	ujprog -t -b 3000000 $<
+
+# Generate a 180-degree phase shifted clock as well
 pll_%.v:
-	$(ICEPATH)icepll \
-		-i $(MHZ) \
-		-o $(subst pll_,,$(basename $@)) \
-		-m \
+	$(PRJTRELLIS)ecppll \
+		-i 25 \
 		-n $(basename $@) \
-		-f $@ # $(BOARD)
-
-
-define make-test =
-$1: $1.vvp
-	vvp $$<
-endef
-
-test: $(TEST-y)
-$(foreach t,$(TEST-y),$(eval $(call make-test,$t)))
-%.vvp:
-	iverilog -o $@ -s $(basename $@) $^
+		-o $(subst pll_,,$(basename $@)) \
+		--clkout1 $(subst pll_,,$(basename $@)) \
+		--phase1 180 \
+		-f $@
 
 clean:
-	$(RM) *.blif *.asc *.bin *.json .*.d
-
+	$(RM) *.config *.bit .*.d *.svf
 -include .*.d

@@ -6,3 +6,5 @@
 pll_*.v
 *.json
 .*.d
+*.bit
+*.rom

@@ -1,15 +1,9 @@
 `ifndef _uart_v_
 `define _uart_v_
-`include "util.v"
-`include "fifo.v"
-
  /*
-  * uart.v - High-speed serial support. Includes a baud generator, UART,
-  *            and a simple RFC1662-inspired packet framing protocol.
-  *
-  *            This module is designed a 3 Mbaud serial port.
-  *            This is the highest data rate supported by
-  *            the popular FT232 USB-to-serial chip.
+  * This module is designed a 3 Mbaud serial port.
+  * This is the highest data rate supported by
+  * the popular FT232 USB-to-serial chip.
   *
   * Copyright (C) 2009 Micah Dowty
   *           (C) 2018 Trammell Hudson
@@ -34,49 +28,23 @@
   */
 
 
-/*
- * Byte transmitter, RS-232 8-N-1
- *
- * Transmits on 'serial'. When 'ready' goes high, we can accept another byte.
- * It should be supplied on 'data' with a pulse on 'data_strobe'.
- */
+`include "util.v"
 
 module uart_tx(
 	input clk,
 	input reset,
-	input baud_x1,
 	output serial,
 	output reg ready,
 	input [7:0] data,
 	input data_strobe
 );
+   parameter DIVISOR = 100;
+   wire baud_x1;
+   divide_by_n #(.N(DIVISOR)) baud_x1_div(clk, reset, baud_x1);
 
-   /*
-    * Left-to-right shift register.
-    * Loaded with data, start bit, and stop bit.
-    *
-    * The stop bit doubles as a flag to tell us whether data has been
-    * loaded; we initialize the whole shift register to zero on reset,
-    * and when the register goes zero again, it's ready for more data.
-    */
    reg [7+1+1:0]   shiftreg;
-
-   /*
-    * Serial output register. This is like an extension of the
-    * shift register, but we never load it separately. This gives
-    * us one bit period of latency to prepare the next byte.
-    *
-    * This register is inverted, so we can give it a reset value
-    * of zero and still keep the 'serial' output high when idle.
-    */
    reg         serial_r;
    assign      serial = !serial_r;
-
-   //assign      ready = (shiftreg == 0);
-
-   /*
-    * State machine
-    */
 
    always @(posedge clk)
      if (reset) begin
@@ -107,27 +75,22 @@ module uart_tx(
 endmodule
 
 
-/*
- * Byte receiver, RS-232 8-N-1
- *
- * Receives on 'serial'. When a properly framed byte is
- * received, 'data_strobe' pulses while the byte is on 'data'.
- *
- * Error bytes are ignored.
- */
+module uart_rx(
+	input clk,
+	input reset,
+	input serial,
+	output [7:0] data,
+	output data_strobe
+);
+   parameter DIVISOR = 25; // should the 1/4 the uart_tx divisor
+   wire baud_x4;
+   divide_by_n #(.N(DIVISOR)) baud_x4_div(clk, reset, baud_x4);
 
-module uart_rx(clk, reset, baud_x4,
-                      serial, data, data_strobe);
-
-   input        clk, reset, baud_x4, serial;
-   output [7:0] data;
-   output       data_strobe;
-
-   /*
-    * Synchronize the serial input to this clock domain
-    */
-   wire         serial_sync;
-   d_flipflop_pair input_dff(clk, reset, serial, serial_sync);
+   // Clock crossing into clk domain
+   reg [1:0] serial_buf;
+   wire serial_sync = serial_buf[1];
+   always @(posedge clk)
+	serial_buf <= { serial_buf[0], serial };
 
    /*
     * State machine: Four clocks per bit, 10 total bits.
@@ -174,76 +137,39 @@ module uart_rx(clk, reset, baud_x4,
 endmodule
 
 
-/*
- * Output UART with a block RAM FIFO queue.
- *
- * Add bytes to the queue and they will be printed when the line is idle.
- */
-module uart_tx_fifo(
+module uart(
 	input clk,
 	input reset,
-	input baud_x1,
-	input [7:0] data,
-	input data_strobe,
-	output serial,
-	output ready
+	// physical interface
+	input serial_rxd,
+	output serial_txd,
+
+	// logical interface
+	output [7:0] rxd,
+	output rxd_strobe,
+	input [7:0] txd,
+	input txd_strobe,
+	output txd_ready
 );
-	parameter NUM = 512;
-	parameter FREESPACE = 1;
+	// todo: rx/tx could share a single clock
+	parameter DIVISOR = 40; // must be divisible by 4 for rx clock
 
-	wire uart_txd_ready; // high the UART is ready to take a new byte
-	reg uart_txd_strobe; // pulse when we have a new byte to transmit
-	reg [7:0] uart_txd;
-
-	uart_tx txd(
+	uart_rx #(.DIVISOR(DIVISOR/4)) rx(
 		.clk(clk),
 		.reset(reset),
-		.baud_x1(baud_x1),
-		.serial(serial),
-		.ready(uart_txd_ready),
-		.data(uart_txd),
-		.data_strobe(uart_txd_strobe)
+		.serial(serial_rxd),
+		.data_strobe(rxd_strobe),
+		.data(rxd),
 	);
 
-	wire fifo_available;
-	reg fifo_read_strobe;
-
-	fifo #(
-		.WIDTH(8),
-		.NUM(NUM),
-		.FREESPACE(FREESPACE),
-	) buffer(
+	uart_tx #(.DIVISOR(DIVISOR)) tx(
 		.clk(clk),
 		.reset(reset),
-		.write_data(data),
-		.write_strobe(data_strobe),
-		.data_available(fifo_available),
-		.space_available(ready),
-		.read_data(uart_txd),
-		.read_strobe(fifo_read_strobe)
+		.serial(serial_txd),
+		.data(txd),
+		.data_strobe(txd_strobe),
+		.ready(txd_ready),
 	);
-
-	// drain the fifo into the serial port
-	reg [9:0] counter;
-
-	always @(posedge clk)
-	begin
-		uart_txd_strobe <= 0;
-		fifo_read_strobe <= 0;
-		counter <= counter + 1;
-
-		if (fifo_available
-		&&  uart_txd_ready
-		//&& counter == 0
-		&& !data_strobe // avoid dual port RAM if possible
-		&& !uart_txd_strobe // don't TX twice on one byte
-		) begin
-			fifo_read_strobe <= 1;
-			uart_txd_strobe <= 1;
-			counter <= 0;
-		end
-	end
 endmodule
-
 
 `endif
