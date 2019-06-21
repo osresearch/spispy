@@ -84,16 +84,11 @@ module spi_flash(
 		end else
 		if (!spi_rx_strobe)
 		begin
-			// if the RAM has returned a result, then start a new read
-			// we are fairly confident that this can't happen
-			// when a SPI byte is also incoming since the timings
-			// should overlap
-			if (spi_rd_cmd && ram_read_valid)
-				ram_addr <= ram_addr + 1;
-
-			// the incoming RAM read is wired directly to the output SPI
-			ram_read_enable <= 0;
-			ram_read_pending <= 0;
+			// the incoming RAM read is wired directly to the output SPI,
+			// so we only need to disable the current read. the new one
+			// will be started at the end of this byte.
+			if (ram_read_valid)
+				ram_read_enable <= 0;
 		end else
 		if (spi_count == 1)
 		begin
@@ -136,7 +131,9 @@ module spi_flash(
 			// start a new read on the next byte
 			ram_addr <= ram_addr + 1;
 			ram_read_enable <= 1;
-			ram_read_pending <= 1;
+
+			if (ram_read_valid)
+				ram_read_enable <= 0;
 		end
 	end
 endmodule

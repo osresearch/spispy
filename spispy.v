@@ -51,8 +51,8 @@ module top(
 	// SPI bus is on the J2 positive pins
 	wire spi_cs_pin = gp[20];
 	wire spi_clk_pin = gp[19];
-	wire spi_miso_pin = gp[18];
-	wire spi_mosi_pin = gp[17];
+	wire spi_mosi_pin = gp[18];
+	wire spi_miso_pin = gp[17];
 
 	reg spi_cs_enable = 0;
 	wire spi_miso_out;
