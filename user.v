@@ -20,11 +20,10 @@ module user_command_parser(
 	output reg [ADDR_BITS-1:0] sd_addr,
 	output reg [7:0] sd_wr_data,
 	input [7:0] sd_rd_data,
-	input sd_rd_ready,
-	input sd_busy,
+	input sd_ack,
+	input sd_idle,
 	output reg sd_we,
-	output reg sd_enable,
-	output reg sd_refresh_inhibit
+	output reg sd_enable
 );
 	parameter ADDR_BITS = 32;
 
@@ -33,7 +32,6 @@ module user_command_parser(
 	reg wr_pending;
 	reg rd_pending;
 	reg [ADDR_BITS-1:0] sd_addr;
-	reg [31:0] addr; // 32 bits, although most flash chips are 24 bits
 	reg [23:0] msg_len; // up to 16 MB at a time
 
 	reg [5:0] cmd_mode;
@@ -60,14 +58,9 @@ module user_command_parser(
 		CMD_VERSION	= "V",
 		CMD_INVALID	= 8'hff;
 
-	// reads had better return by this time
-	reg [7:0] rd_counter;
-
 	always @(posedge clk)
 	begin
 		uart_txd_strobe <= 0;
-		sd_enable <= 0;
-		sd_we <= 0;
 		counter <= counter + 1;
 
 		if (reset) begin
@@ -75,16 +68,15 @@ module user_command_parser(
 			msg_len <= 0;
 			wr_pending <= 0;
 			rd_pending <= 0;
-			rd_counter <= 0;
 		end else
 		if (uart_rxd_strobe)
 		case(mode)
 		MODE_WAIT: begin
-			sd_refresh_inhibit <= 0;
+			sd_we <= 0;
 			rd_pending <= 0;
 			wr_pending <= 0;
 			msg_len <= 0;
-			addr <= 0;
+			sd_addr <= 0;
 
 			if (uart_rxd == CMD_HDR) begin
 				mode <= MODE_CMD;
@@ -108,19 +100,19 @@ module user_command_parser(
 
 		// build the address
 		MODE_A3: begin
-			addr[31:24] <= uart_rxd;
+			sd_addr[31:24] <= uart_rxd;
 			mode <= MODE_A2;
 		end
 		MODE_A2: begin
-			addr[23:16] <= uart_rxd;
+			sd_addr[23:16] <= uart_rxd;
 			mode <= MODE_A1;
 		end
 		MODE_A1: begin
-			addr[15: 8] <= uart_rxd;
+			sd_addr[15: 8] <= uart_rxd;
 			mode <= MODE_A0;
 		end
 		MODE_A0: begin
-			addr[ 7: 0] <= uart_rxd;
+			sd_addr[ 7: 0] <= uart_rxd;
 			mode <= cmd_mode;
 		end
 
@@ -160,6 +152,8 @@ module user_command_parser(
 				uart_txd <= "%";
 			end
 			sd_wr_data <= uart_rxd;
+			sd_we <= 1;
+			sd_enable <= 1;
 			wr_pending <= 1;
 		end
 
@@ -180,40 +174,26 @@ module user_command_parser(
 			if (msg_len == 0) begin
 				mode <= MODE_WAIT;
 			end else
-			if (sd_rd_ready && rd_pending) begin
+			if (sd_ack && rd_pending) begin
 				// new byte is available to send
+				sd_enable <= 0;
+				uart_txd <= sd_addr[7:0] + "A"; // sd_rd_data;
 				uart_txd <= sd_rd_data;
 				uart_txd_strobe <= 1;
 				msg_len <= msg_len - 1;
-				addr <= addr + 1;
+				sd_addr <= sd_addr + 1;
 				rd_pending <= 0;
 			end else
 			if (!rd_pending
 			&& uart_txd_ready
-			&& !uart_txd_strobe
-			//&& counter[6:0] == 0
-			&& !sd_busy
+			&& sd_idle
 			&& !sd_enable)
 			begin
 				// the SDRAM and UART are ready to
 				// start another read
 				sd_enable <= 1;
 				sd_we <= 0;
-				sd_addr <= addr;
 				rd_pending <= 1;
-				rd_counter <= 0;
-			end else
-			if (rd_pending)
-			begin
-				rd_counter <= rd_counter + 1;
-				if (rd_counter == 8'hFF) begin
-					// timed out on this read?
-					uart_txd <= 8'hAF;
-					uart_txd_strobe <= 1;
-					msg_len <= msg_len - 1;
-					addr <= addr + 1;
-					rd_pending <= 0;
-				end
 			end
 		end else
 		if (mode == MODE_WR) begin
@@ -222,16 +202,12 @@ module user_command_parser(
 				uart_txd <= "w";
 				uart_txd_strobe <= 1;
 			end else
-			if (wr_pending
-			&& !sd_busy
-			&& !sd_enable)
-			begin
-				// the SDRAM is ready for a write
-				sd_we <= 1;
-				sd_enable <= 1;
-				sd_addr <= addr;
+			if (wr_pending && sd_ack) begin
+				// write done, prepare for next byte
+				sd_we <= 0;
+				sd_enable <= 0;
 				wr_pending <= 0;
-				addr <= addr + 1;
+				sd_addr <= sd_addr + 1;
 				msg_len <= msg_len - 1;
 			end
 		end else
