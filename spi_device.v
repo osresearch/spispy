@@ -25,10 +25,6 @@
  * spi_rx_strobe, but before the next falling edge of the SPI clock.  It is safe
  * to set the output on that same clock cycle.
  *
- * If the process of generating the data might take longer than the SPI clock
- * (but hopefully less than the idle time on the bus), spi_tx_strobe_immediate
- * can be used to "catch up" on that first bit.
- *
  */
 
 module spi_device(
@@ -43,7 +39,7 @@ module spi_device(
 	output [7:0] spi_rx_data,
 	input [7:0] spi_tx_data,
 	input spi_tx_strobe, // reload the output register
-	input spi_tx_strobe_immediate, // reload the output register and wire bit
+	output spi_timeout
 );
 	reg [1:0] spi_cs_sync;
 	reg [1:0] spi_clk_sync;
@@ -54,6 +50,18 @@ module spi_device(
 		spi_cs_sync <= { spi_cs_sync[0], spi_cs };
 		spi_clk_sync <= { spi_clk_sync[0], spi_clk };
 		spi_mosi_sync <= { spi_mosi_sync[0], spi_mosi };
+	end
+
+	// track how long since the last clock and abort the transaction
+	// if the clock is no longer ticking.
+	reg [3:0] spi_clk_count;
+	assign spi_timeout = spi_clk_count == 0;
+	always @(posedge clk) begin
+		if (spi_cs || reset || spi_clk_falling)
+			spi_clk_count <= ~0;
+		else
+		if (spi_clk_count != 0)
+			spi_clk_count <= spi_clk_count - 1;
 	end
 
 	reg [2:0] bit_count;
@@ -76,7 +84,8 @@ module spi_device(
 
 	reg [2:0] output_bit;
 	reg [7:0] miso_reg;
-	assign spi_miso = miso_reg[output_bit]; // current output is top bit
+	//assign spi_miso = miso_reg[7]; // current output is top bit
+	assign spi_miso = miso_reg[output_bit];
 
 	always @(posedge clk)
 	begin
@@ -90,7 +99,6 @@ module spi_device(
 			// anytime the spi_cs goes high, reset the bit count
 			cmd_started <= 0;
 			bit_count <= 0;
-			output_bit <= 7;
 		end else
 		if (spi_clk_rising)
 		begin
@@ -107,44 +115,28 @@ module spi_device(
 `endif
 			end
 		end else
+		if (spi_tx_strobe)
+		begin
+			// re-load the output register; this will cause the new
+			// value to appear immediately.
+			miso_reg <= spi_tx_data;
+		end else
 		if (spi_clk_falling)
 		begin
 			// shift out data on the falling edge
-			//miso_reg <= { miso_reg[7:0], 1'b1 };
-			output_bit <= output_bit - 1;
+			// maintain the last bit forever
+			//miso_reg <= { miso_reg[6:0], miso_reg[0] };
 		end
-
-		// re-load the output register; will be clocked
-		// out starting on the next falling edge. does not change
-		// current output
-		if (spi_tx_strobe)
-		begin
-			//miso_reg[7:0] <= ~miso_reg[7:0]; // spi_tx_data;
-			miso_reg[7:0] <= spi_tx_data;
-		end
-
-		// re-load the output register and the output bit.
-		// this is used to fix up a transaction already in process
-		if (spi_tx_strobe_immediate)
-			miso_reg[7:0] <= spi_tx_data;
-			//miso_reg[8:0] <= { spi_tx_data, 1'b1 };
 	end
 
-/*
-	reg [2:0] output_bit;
-	//assign spi_miso = miso_reg[output_bit];
-	reg spi_miso;
 	always @(negedge spi_clk or posedge spi_cs)
 	begin
-		if (spi_cs) begin
+		if (spi_cs)
 			output_bit <= 7;
-			spi_miso <= 0;
-		end else begin
+		else
 			output_bit <= output_bit - 1;
-			spi_miso <= miso_reg[output_bit-1];
-		end
 	end
-*/
+
 
 endmodule
 
