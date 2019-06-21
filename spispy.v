@@ -318,8 +318,10 @@ sdram_ctrl0 (
 	always @(posedge clk)
 	begin
 		uart_txd_strobe <= 0;
-		if (spi_cs_in)
+		if (counter == 0)
 			trigger <= 0;
+		else
+			counter <= counter - 1;
 
 		if (reset) begin
 			// anything to do?
@@ -336,6 +338,11 @@ sdram_ctrl0 (
 			uart_word <= { spi_log_addr[23:0], spi_log_len };
 			uart_words <= 4;
 			led_reg <= spi_log_addr[11:4];
+
+			counter <= ~0;
+
+			if (spi_log_addr[23:0] == 24'h000010)
+				trigger <= 1;
 		end else
 		if (uart_words != 0 && uart_txd_ready)
 		begin
@@ -349,12 +356,6 @@ sdram_ctrl0 (
 		begin
 			uart_txd_strobe <= 1;
 			uart_txd <= user_txd;
-		end else
-		if (uart_txd_ready && spi_critical)
-		begin
-			uart_txd_strobe <= 1;
-			uart_txd <= "a" + counter;
-			counter <= counter + 1;
 		end else begin
 			led_reg[7] <= spi_critical;
 			led_reg[6] <= sd_we;
