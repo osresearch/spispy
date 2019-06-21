@@ -74,8 +74,9 @@ module spi_device(
 	reg [7:0] spi_rx_data;
 `endif
 
-	reg [8:0] miso_reg; // 9 bits
-	//assign spi_miso = miso_reg[8]; // current output is top bit
+	reg [2:0] output_bit;
+	reg [7:0] miso_reg;
+	assign spi_miso = miso_reg[output_bit]; // current output is top bit
 
 	always @(posedge clk)
 	begin
@@ -89,6 +90,7 @@ module spi_device(
 			// anytime the spi_cs goes high, reset the bit count
 			cmd_started <= 0;
 			bit_count <= 0;
+			output_bit <= 7;
 		end else
 		if (spi_clk_rising)
 		begin
@@ -108,14 +110,18 @@ module spi_device(
 		if (spi_clk_falling)
 		begin
 			// shift out data on the falling edge
-			miso_reg <= { miso_reg[7:0], 1'b1 };
+			//miso_reg <= { miso_reg[7:0], 1'b1 };
+			output_bit <= output_bit - 1;
 		end
 
 		// re-load the output register; will be clocked
 		// out starting on the next falling edge. does not change
 		// current output
 		if (spi_tx_strobe)
+		begin
+			//miso_reg[7:0] <= ~miso_reg[7:0]; // spi_tx_data;
 			miso_reg[7:0] <= spi_tx_data;
+		end
 
 		// re-load the output register and the output bit.
 		// this is used to fix up a transaction already in process
@@ -124,6 +130,7 @@ module spi_device(
 			//miso_reg[8:0] <= { spi_tx_data, 1'b1 };
 	end
 
+/*
 	reg [2:0] output_bit;
 	//assign spi_miso = miso_reg[output_bit];
 	reg spi_miso;
@@ -137,6 +144,7 @@ module spi_device(
 			spi_miso <= miso_reg[output_bit-1];
 		end
 	end
+*/
 
 endmodule
 
