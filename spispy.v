@@ -7,6 +7,7 @@
 `include "sdram_ctrl.v"
 `include "spi_device.v"
 `include "spi_flash.v"
+`include "user.v"
 
 module top(
 	input clk_25mhz,
@@ -29,7 +30,10 @@ module top(
 
 	// GPIO pins, to be assigned
 	inout [27:0] gp,
-	inout [27:0] gn
+	inout [27:0] gn,
+
+	// buttons for user io
+	input [6:0] btn,
 );
 	// gpio0 must be tied high to prevent board from rebooting
 	assign wifi_gpio0 = 1;
@@ -39,7 +43,7 @@ module top(
 
 	// Generate a 132 MHz clock from the 25 MHz reference
 	// with a 180 degree out of phase sdram clk
-	wire clk_132, clk_132_180, locked, reset = !locked;
+	wire clk_132, clk_132_180, locked, reset = !locked || btn[1];
 	pll_132 pll_132_i(clk_25mhz, clk_132, clk_132_180, locked);
 	wire clk = clk_132;
 	wire sdram_clk = clk_132_180; // sdram needs to be stable on the rising edge
@@ -102,6 +106,8 @@ module top(
 	);
 
 	// flag for when we have timing critical spi transaction
+	// there is a race condition with asserting this while the bus is busy
+	// so don't mix serial operations with booting the machine right now
 	wire spi_critical;
 
 	// these will be written to the serial port
@@ -112,8 +118,7 @@ module top(
 	// interface to the memory
 	wire [31:0] spi_read_addr;
 	wire [7:0] spi_read_data;
-	wire spi_read_strobe; // when they have an address for us
-	wire spi_read_ready; // when we have data for them
+	wire spi_read_enable;
 
 	spi_flash spi_f(
 		.clk(clk),
@@ -127,13 +132,12 @@ module top(
 		.spi_tx_strobe(spi_tx_strobe),
 		.spi_tx_data(spi_tx_data),
 
-/*
 		// memory interface
 		.spi_critical(spi_critical),
-		.ram_read_addr(spi_read_addr),
-		.ram_read_strobe(spi_read_strobe), // when an address has been received
-		.ram_read_data(spi_read_addr[0] ? 
-*/
+		.ram_addr(spi_read_addr),
+		.ram_read_enable(spi_read_enable), // when an address has been received
+		.ram_read_data(sd_rd_data),
+		.ram_read_valid(spi_critical ? sd_ack : 0),
 
 		// logging interface
 		.log_strobe(spi_log_strobe),
@@ -143,7 +147,7 @@ module top(
 
 	// oscilloscope debug pins also on jp2
 	wire debug_0 = spi_miso_in;
-	wire debug_1 = spi_clk_in;
+	wire debug_1 = spi_miso_out;
 	reg trigger;
 	TRELLIS_IO #(.DIR("OUTPUT")) debug0(.B(gp[26]), .I(trigger));
 	TRELLIS_IO #(.DIR("OUTPUT")) debug2(.B(gp[27]), .I(debug_0));
@@ -178,21 +182,30 @@ module top(
 	// sdram logical interface has a 16-bit data interface
 	parameter ADDR_WIDTH = 24;
 	parameter DATA_WIDTH = 16;
-	reg [ADDR_WIDTH-1:0] sd_addr;
-	reg [DATA_WIDTH-1:0] sd_wr_data;
 	wire [DATA_WIDTH-1:0] sd_rd_data;
-	wire [DATA_WIDTH-1:0] sd_rd_data_raw;
-	wire sd_rd_ready_raw;
-	reg sd_we;
-	reg sd_enable;
+
+	// the serial user interface has a lower priority access to the sdram
+	wire user_sd_we;
+	wire user_sd_enable;
+	wire [ADDR_WIDTH-1:0] user_sd_addr;
+	wire [DATA_WIDTH-1:0] user_sd_wr_data;
+
+	// the spi bus can take control of the ram by asserting the spi_critical
+	// signal, which takes over all of the inputs
+	// note that right now the sdram is 16-bit wide, but we read only the bottom byte
+	// so it is necessary to shift the address by 1
+	wire sd_we = spi_critical ? 0 : user_sd_we;
+	wire sd_enable = spi_critical ? spi_read_enable : user_sd_enable;
+	wire [ADDR_WIDTH-1:0] sd_addr = { spi_critical ? spi_read_addr : user_sd_addr, 1'b0 };
+	//wire [ADDR_WIDTH-1:0] sd_addr = spi_critical ? spi_read_addr : user_sd_addr;
+	wire [DATA_WIDTH-1:0] sd_wr_data = spi_critical ? 16'hDEAD : user_sd_wr_data;
 
 	wire sd_ack;
 	wire sd_idle;
 
-	//assign sdram_clk = clk;
-wire	[15:0]	sdram_dq_i;
-wire	[15:0]	sdram_dq_o;
-wire		sdram_dq_oe;
+	wire	[15:0]	sdram_dq_i;
+	wire	[15:0]	sdram_dq_o;
+	wire		sdram_dq_oe;
 
 	// generate an sdram reset controller
 	reg sd_refresh_inhibit;
@@ -206,6 +219,7 @@ wire		sdram_dq_oe;
 		if (sdram_reset)
 			sdram_reset_counter <= sdram_reset_counter - 1;
 
+	// the dq pins are bidirectional and controlled by the dq_oe signal
 	genvar i;
 	generate
 	for(i=0 ; i < DATA_WIDTH ; i=i+1)
@@ -257,17 +271,49 @@ sdram_ctrl0 (
 	.idle_o		(sd_idle),
 	.adr_i		(sd_addr),
 	.dat_i		(sd_wr_data),
-	.dat_raw	(sd_rd_data),
+	//.dat_raw	(sd_rd_data),
+	.dat_o	(sd_rd_data),
 	.sel_i		(2'b11), // always do both bytes
 	.acc_i		(sd_enable),
-	.ack_raw	(sd_ack),
+	//.ack_raw	(sd_ack),
+	.ack_o	(sd_ack),
 	.we_i		(sd_we),
 	.refresh_inhibit_i(sd_refresh_inhibit),
 	.pause_read_i	(sd_pause_read)
 );
 
+	// Serial port user interface
+	wire [7:0] user_txd;
+	wire user_txd_strobe;
+	wire user_txd_ready = spi_critical ? 0 : uart_txd_ready;
+
+	user_command_parser user(
+		.clk(clk),
+		.reset(reset),
+		// serial port interface
+		.uart_rxd(uart_rxd),
+		.uart_rxd_strobe(uart_rxd_strobe),
+		.uart_txd(user_txd),
+		.uart_txd_strobe(user_txd_strobe),
+		.uart_txd_ready(user_txd_ready),
+
+		// sdram interface
+		.sd_addr(user_sd_addr),
+		.sd_we(user_sd_we),
+		.sd_enable(user_sd_enable),
+		.sd_wr_data(user_sd_wr_data),
+		.sd_rd_data(sd_rd_data),
+		.sd_ack(spi_critical ? 0 : sd_ack),
+		.sd_idle(spi_critical ? 0 : sd_idle),
+	);
+
 	reg [2:0] uart_words;
 	reg [31:0] uart_word;
+	reg user_sd_enable_prev;
+	always @(posedge clk) user_sd_enable_prev <= user_sd_enable;
+	wire user_sd_enable_rising = user_sd_enable && !user_sd_enable_prev;
+
+	reg [4:0] counter;
 
 	always @(posedge clk)
 	begin
@@ -277,6 +323,7 @@ sdram_ctrl0 (
 
 		if (reset) begin
 			// anything to do?
+			counter <= 0;
 		end else
 		if (uart_rxd_strobe)
 		begin
@@ -298,6 +345,19 @@ sdram_ctrl0 (
 			uart_txd <= uart_word[31:24];
 			uart_word <= uart_word << 8;
 		end else
+		if (user_txd_strobe && uart_txd_ready)
+		begin
+			uart_txd_strobe <= 1;
+			uart_txd <= user_txd;
+		end else
+		if (uart_txd_ready && spi_critical)
+		begin
+			uart_txd_strobe <= 1;
+			uart_txd <= "a" + counter;
+			counter <= counter + 1;
+		end else begin
 			led_reg[7] <= spi_critical;
+			led_reg[6] <= sd_we;
+		end
 	end
 endmodule

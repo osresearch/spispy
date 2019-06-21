@@ -20,7 +20,7 @@ module spi_flash(
 	// memory interface
 	output	spi_critical, // asserted when we need to lock the memory bus
 	output [31:0] ram_addr,
-	output ram_read_strobe,
+	output ram_read_enable,
 	input [7:0] ram_read_data, // should be 31:0 for quad spi?
 	input ram_read_valid, // when the data is valid
 
@@ -29,11 +29,13 @@ module spi_flash(
 	output reg [7:0] log_len,
 	output reg log_strobe
 );
-	// this should probably be wired to ram_read_data
-	reg [7:0] spi_tx_data;
+	// immediately route incoming ram data to the spi output
+	assign spi_tx_strobe = ram_read_valid;
+	assign spi_tx_data = ram_read_pending ? ram_read_data : 0;
+	reg ram_read_pending;
 
 	reg [31:0] ram_addr;
-	reg ram_read_strobe;
+	reg ram_read_enable;
 
 	reg [2:0] spi_count;
 	reg spi_rd_cmd;
@@ -43,7 +45,6 @@ module spi_flash(
 	// SPI command state machine
 	always @(posedge clk)
 	begin
-		ram_read_strobe <= 0;
 		log_strobe <= 0;
 
 		if (reset || spi_cs) begin
@@ -51,6 +52,8 @@ module spi_flash(
 			// a logging event if we had one
 			spi_critical <= 0;
 			spi_count <= 0;
+			ram_read_pending <= 0;
+			ram_read_enable <= 0;
 
 			if (!reset && spi_rd_cmd && spi_count == 4)
 			begin
@@ -86,9 +89,11 @@ module spi_flash(
 			// when a SPI byte is also incoming since the timings
 			// should overlap
 			if (spi_rd_cmd && ram_read_valid)
-			begin
 				ram_addr <= ram_addr + 1;
-			end
+
+			// the incoming RAM read is wired directly to the output SPI
+			ram_read_enable <= 0;
+			ram_read_pending <= 0;
 		end else
 		if (spi_count == 1)
 		begin
@@ -106,7 +111,7 @@ module spi_flash(
 			// we have enough to start the SDRAM activation
 			// SDRAM should not be busy since we've paused
 			// refresh and asserted the priority flag
-			ram_read_strobe <= 1;
+			ram_read_enable <= 1;
 		end else
 		if (spi_count == 3)
 		begin
@@ -114,9 +119,14 @@ module spi_flash(
 			ram_addr[ 7: 0] <= spi_rx_data;
 
 			// the RAM should be primed and ready for this new
-			// read, so send another read strobe
-			ram_read_strobe <= 1;
+			// read, so start the new read and hope we have a result
+			// before the next falling edge
+			ram_read_enable <= 1;
 			spi_count <= 4;
+			ram_read_pending <= 1;
+
+			// we could save another clock cycle by routing the
+			// ram_read_enable latch to spi_rx_strobe
 		end else
 		begin
 			// increment the spi_len for logging,
@@ -125,7 +135,8 @@ module spi_flash(
 
 			// start a new read on the next byte
 			ram_addr <= ram_addr + 1;
-			ram_read_strobe <= 1;
+			ram_read_enable <= 1;
+			ram_read_pending <= 1;
 		end
 	end
 endmodule
