@@ -6,6 +6,7 @@
 `include "pll_132.v"
 `include "sdram_ctrl.v"
 `include "spi_device.v"
+`include "spi_flash.v"
 
 module top(
 	input clk_25mhz,
@@ -81,6 +82,9 @@ module top(
 		.O(spi_clk_in),
 	);
 
+	wire spi_tx_strobe;
+	wire [7:0] spi_tx_data;
+
 	spi_device spi_i(
 		.clk(clk),
 		.reset(reset),
@@ -93,8 +97,48 @@ module top(
 		.spi_rx_data(spi_rx_data),
 		.spi_rx_cmd(spi_rx_cmd),
 		.spi_rx_strobe(spi_rx_strobe),
-		.spi_tx_strobe(0),
-		.spi_tx_strobe_immediate(0),
+		.spi_tx_data(spi_tx_data),
+		.spi_tx_strobe(spi_tx_strobe),
+	);
+
+	// flag for when we have timing critical spi transaction
+	wire spi_critical;
+
+	// these will be written to the serial port
+	wire [31:0] spi_log_addr;
+	wire [7:0] spi_log_len;
+	wire spi_log_strobe;
+
+	// interface to the memory
+	wire [31:0] spi_read_addr;
+	wire [7:0] spi_read_data;
+	wire spi_read_strobe; // when they have an address for us
+	wire spi_read_ready; // when we have data for them
+
+	spi_flash spi_f(
+		.clk(clk),
+		.reset(reset),
+
+		// spi bus interface
+		.spi_cs(spi_cs_enable ? 0 : spi_cs_in),
+		.spi_rx_data(spi_rx_data),
+		.spi_rx_cmd(spi_rx_cmd),
+		.spi_rx_strobe(spi_rx_strobe),
+		.spi_tx_strobe(spi_tx_strobe),
+		.spi_tx_data(spi_tx_data),
+
+/*
+		// memory interface
+		.spi_critical(spi_critical),
+		.ram_read_addr(spi_read_addr),
+		.ram_read_strobe(spi_read_strobe), // when an address has been received
+		.ram_read_data(spi_read_addr[0] ? 
+*/
+
+		// logging interface
+		.log_strobe(spi_log_strobe),
+		.log_addr(spi_log_addr),
+		.log_len(spi_log_len),
 	);
 
 	// oscilloscope debug pins also on jp2
@@ -222,49 +266,38 @@ sdram_ctrl0 (
 	.pause_read_i	(sd_pause_read)
 );
 
-	reg [24:0] wr_addr;
-	reg [24:0] rd_addr;
-	reg [4:0] rd_pending;
-
-	reg [10:0] rd_timer;
-	reg [7:0] count;
-	reg spi_log_this;
+	reg [2:0] uart_words;
+	reg [31:0] uart_word;
 
 	always @(posedge clk)
 	begin
 		uart_txd_strobe <= 0;
-		rd_timer <= rd_timer + 1;
 		if (spi_cs_in)
 			trigger <= 0;
 
-		if (reset || sdram_reset) begin
-			wr_addr <= 0;
-			rd_addr <= 0;
-			rd_pending <= 0;
-			sd_refresh_inhibit <= 0;
+		if (reset) begin
+			// anything to do?
 		end else
 		if (uart_rxd_strobe)
 		begin
 			led_reg <= uart_rxd;
 		end else
-		if (spi_rx_strobe)
+		if (spi_log_strobe && uart_txd_ready)
 		begin
-			if (spi_rx_cmd) begin
-				count <= 0;
-				spi_log_this <= uart_txd_ready && spi_rx_data == 8'h03;
-			end else begin
-				count <= count + 1;
-			end
-
-			trigger <= spi_rx_cmd;
-
-			if (uart_txd_ready
-			&& (count < 3 || spi_rx_cmd)
-			&& spi_log_this)
-			begin
-				uart_txd <= spi_rx_data;
-				uart_txd_strobe <= 1;
-			end
-		end
+			// a SPI transaction has just occured;
+			// write it to the serial port if there is space
+			uart_word <= { spi_log_addr[23:0], spi_log_len };
+			uart_words <= 4;
+			led_reg <= spi_log_addr[11:4];
+		end else
+		if (uart_words != 0 && uart_txd_ready)
+		begin
+			uart_words <= uart_words - 1;
+			uart_txd_strobe <= 1;
+			uart_txd <= "0" + uart_words; // uart_word[31:24];
+			uart_txd <= uart_word[31:24];
+			uart_word <= uart_word << 8;
+		end else
+			led_reg[7] <= spi_critical;
 	end
 endmodule
