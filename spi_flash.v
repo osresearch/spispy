@@ -27,12 +27,12 @@ module spi_flash(
 	// logging interface. valid until the next command starts
 	output reg [31:0] log_addr,
 	output reg [7:0] log_len,
-	output reg log_strobe
+	output reg log_strobe,
+	output reg [7:0] errors
 );
 	// immediately route incoming ram data to the spi output
 	assign spi_tx_strobe = ram_read_valid;
 	assign spi_tx_data = ram_read_data;
-	reg ram_read_pending;
 
 	reg [31:0] ram_addr;
 	reg ram_read_enable;
@@ -40,6 +40,8 @@ module spi_flash(
 	reg [2:0] spi_count;
 	reg spi_rd_cmd;
 
+	// as soon as we detect the start of a read command, lock the sdram
+	// control for our exclusive access
 	reg spi_critical;
 
 	// SPI command state machine
@@ -47,12 +49,15 @@ module spi_flash(
 	begin
 		log_strobe <= 0;
 
+		if (reset) begin
+			spi_critical <= 0;
+			errors <= 0;
+		end else
 		if (reset || spi_cs) begin
 			// no longer asserted, release our locks and signal
 			// a logging event if we had one
 			spi_critical <= 0;
 			spi_count <= 0;
-			ram_read_pending <= 0;
 			ram_read_enable <= 0;
 
 			if (!reset && spi_rd_cmd && spi_count == 4)
@@ -118,7 +123,6 @@ module spi_flash(
 			// before the next falling edge
 			ram_read_enable <= 1;
 			spi_count <= 4;
-			ram_read_pending <= 1;
 
 			// we could save another clock cycle by routing the
 			// ram_read_enable latch to spi_rx_strobe
@@ -128,12 +132,14 @@ module spi_flash(
 			// leave the spi_addr alone so it shows the start address
 			log_len <= log_len + 1;
 
+			// if we get here and the read enable is still set,
+			// this indicates that our careful RAM timing has failed
+			if (ram_read_enable)
+				errors[1] <= 1;
+
 			// start a new read on the next byte
 			ram_addr <= ram_addr + 1;
 			ram_read_enable <= 1;
-
-			if (ram_read_valid)
-				ram_read_enable <= 0;
 		end
 	end
 endmodule
