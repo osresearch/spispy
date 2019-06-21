@@ -93,7 +93,7 @@ module top(
 		.clk(clk),
 		.reset(reset),
 		// physical interface, in spi_clk domain
-		.spi_cs(spi_cs_enable ? 0 : spi_cs_in),
+		.spi_cs(spi_cs_enable ? 1'b0 : spi_cs_in),
 		.spi_clk(spi_clk_in),
 		.spi_miso(spi_miso_out),
 		.spi_mosi(spi_mosi_in),
@@ -125,7 +125,7 @@ module top(
 		.reset(reset),
 
 		// spi bus interface
-		.spi_cs(spi_cs_enable ? 0 : spi_cs_in),
+		.spi_cs(spi_cs_enable ? 1'b0 : spi_cs_in),
 		.spi_rx_data(spi_rx_data),
 		.spi_rx_cmd(spi_rx_cmd),
 		.spi_rx_strobe(spi_rx_strobe),
@@ -137,7 +137,7 @@ module top(
 		.ram_addr(spi_read_addr),
 		.ram_read_enable(spi_read_enable), // when an address has been received
 		.ram_read_data(sd_rd_data),
-		.ram_read_valid(spi_critical ? sd_ack : 0),
+		.ram_read_valid(spi_critical ? sd_ack : 1'b0),
 
 		// logging interface
 		.log_strobe(spi_log_strobe),
@@ -194,7 +194,7 @@ module top(
 	// signal, which takes over all of the inputs
 	// note that right now the sdram is 16-bit wide, but we read only the bottom byte
 	// so it is necessary to shift the address by 1
-	wire sd_we = spi_critical ? 0 : user_sd_we;
+	wire sd_we = spi_critical ? 1'b0 : user_sd_we;
 	wire sd_enable = spi_critical ? spi_read_enable : user_sd_enable;
 	wire [ADDR_WIDTH-1:0] sd_addr = { spi_critical ? spi_read_addr : user_sd_addr, 1'b0 };
 	//wire [ADDR_WIDTH-1:0] sd_addr = spi_critical ? spi_read_addr : user_sd_addr;
@@ -208,7 +208,7 @@ module top(
 	wire		sdram_dq_oe;
 
 	// generate an sdram reset controller
-	reg sd_refresh_inhibit;
+	wire sd_refresh_inhibit = spi_critical;
 	reg sd_pause_read = 0;
 	reg [15:0] sdram_reset_counter;
 	wire sdram_reset = sdram_reset_counter != 0;
@@ -271,12 +271,12 @@ sdram_ctrl0 (
 	.idle_o		(sd_idle),
 	.adr_i		(sd_addr),
 	.dat_i		(sd_wr_data),
-	//.dat_raw	(sd_rd_data),
-	.dat_o	(sd_rd_data),
+	.dat_raw	(sd_rd_data),
+	//.dat_o	(sd_rd_data),
 	.sel_i		(2'b11), // always do both bytes
 	.acc_i		(sd_enable),
-	//.ack_raw	(sd_ack),
-	.ack_o	(sd_ack),
+	.ack_raw	(sd_ack),
+	//.ack_o	(sd_ack),
 	.we_i		(sd_we),
 	.refresh_inhibit_i(sd_refresh_inhibit),
 	.pause_read_i	(sd_pause_read)
@@ -285,7 +285,7 @@ sdram_ctrl0 (
 	// Serial port user interface
 	wire [7:0] user_txd;
 	wire user_txd_strobe;
-	wire user_txd_ready = spi_critical ? 0 : uart_txd_ready;
+	wire user_txd_ready = spi_critical ? 1'b0 : uart_txd_ready;
 
 	user_command_parser user(
 		.clk(clk),
@@ -303,8 +303,8 @@ sdram_ctrl0 (
 		.sd_enable(user_sd_enable),
 		.sd_wr_data(user_sd_wr_data),
 		.sd_rd_data(sd_rd_data),
-		.sd_ack(spi_critical ? 0 : sd_ack),
-		.sd_idle(spi_critical ? 0 : sd_idle),
+		.sd_ack(spi_critical ? 1'b0 : sd_ack),
+		.sd_idle(spi_critical ? 1'b0 : sd_idle),
 	);
 
 	reg [2:0] uart_words;
