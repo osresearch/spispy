@@ -31,7 +31,7 @@ module spi_flash(
 );
 	// immediately route incoming ram data to the spi output
 	assign spi_tx_strobe = ram_read_valid;
-	assign spi_tx_data = ram_read_pending ? ram_read_data : 0;
+	assign spi_tx_data = ram_read_data;
 	reg ram_read_pending;
 
 	reg [31:0] ram_addr;
