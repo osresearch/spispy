@@ -54,7 +54,10 @@ module top(
 	wire spi_mosi_pin = gp[18];
 	wire spi_miso_pin = gp[17];
 
-	reg spi_cs_enable = 0;
+	wire ENABLE_EMULATION = 0;
+	wire spi_timeout;
+	wire spi_cs_enable = spi_critical && !spi_timeout && ENABLE_EMULATION;
+	wire spi_cs_fake = spi_cs_enable ? 1'b0 : spi_cs_in;
 	wire spi_miso_out;
 	wire spi_miso_in;
 	wire spi_mosi_in;
@@ -93,7 +96,7 @@ module top(
 		.clk(clk),
 		.reset(reset),
 		// physical interface, in spi_clk domain
-		.spi_cs(spi_cs_enable ? 1'b0 : spi_cs_in),
+		.spi_cs(spi_cs_fake),
 		.spi_clk(spi_clk_in),
 		.spi_miso(spi_miso_out),
 		.spi_mosi(spi_mosi_in),
@@ -103,6 +106,7 @@ module top(
 		.spi_rx_strobe(spi_rx_strobe),
 		.spi_tx_data(spi_tx_data),
 		.spi_tx_strobe(spi_tx_strobe),
+		.spi_timeout(spi_timeout)
 	);
 
 	// flag for when we have timing critical spi transaction
@@ -125,7 +129,7 @@ module top(
 		.reset(reset),
 
 		// spi bus interface
-		.spi_cs(spi_cs_enable ? 1'b0 : spi_cs_in),
+		.spi_cs(spi_cs_fake),
 		.spi_rx_data(spi_rx_data),
 		.spi_rx_cmd(spi_rx_cmd),
 		.spi_rx_strobe(spi_rx_strobe),
@@ -271,12 +275,16 @@ sdram_ctrl0 (
 	.idle_o		(sd_idle),
 	.adr_i		(sd_addr),
 	.dat_i		(sd_wr_data),
-	.dat_raw	(sd_rd_data),
-	//.dat_o	(sd_rd_data),
 	.sel_i		(2'b11), // always do both bytes
 	.acc_i		(sd_enable),
+`define SLOW_RD
+`ifdef SLOW_RD
+	.dat_o		(sd_rd_data),
+	.ack_o		(sd_ack),
+`else
+	.dat_raw	(sd_rd_data),
 	.ack_raw	(sd_ack),
-	//.ack_o	(sd_ack),
+`endif
 	.we_i		(sd_we),
 	.refresh_inhibit_i(sd_refresh_inhibit),
 	.pause_read_i	(sd_pause_read)
