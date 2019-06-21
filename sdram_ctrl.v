@@ -155,8 +155,8 @@ module sdram_ctrl #(
 				 (row_active[curr_bank] == curr_row));
 	assign idle_o = (state == IDLE); // | (state == REF) | (state == PRE_ALL);
 
-	// fast access to the data for low-latency reads
-	assign ack_raw = ack_o || (state == READ && cycle_count == tCAC);
+	// fast access to the data for low-latency reads, otherwise use the write
+	assign ack_raw = (we_i && ack_o) || (state == READ && cycle_count == tCAC);
 	assign dat_raw = dq_i;
 
 	always @(posedge sdram_clk) begin
