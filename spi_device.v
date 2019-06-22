@@ -36,6 +36,8 @@ module spi_device(
 	output	spi_miso,
 	output  spi_rx_cmd, // set for the first byte of a new transaction
 	output	spi_rx_strobe,
+	output	spi_rx_bit_strobe,
+	output [2:0] spi_rx_bit,
 	output [7:0] spi_rx_data,
 	input [7:0] spi_tx_data,
 	input spi_tx_strobe, // reload the output register
@@ -72,8 +74,10 @@ module spi_device(
 `define SPI_UNLATCHED
 `ifdef SPI_UNLATCHED
 	// these are unlatched so that they are available immediately
-	assign spi_rx_strobe = bit_count == 7 && spi_clk_rising && !spi_cs_sync[1];
 	assign spi_rx_data = mosi_reg_next;
+	assign spi_rx_bit = bit_count;
+	assign spi_rx_bit_strobe = spi_clk_rising && !spi_cs_sync[1];
+	assign spi_rx_strobe = spi_rx_bit == 7 && spi_rx_bit_strobe;
 	assign spi_rx_cmd = spi_rx_strobe && cmd_started == 0;
 `else
 	// these are latched so that they are stable
@@ -83,8 +87,8 @@ module spi_device(
 `endif
 
 	reg [2:0] output_bit;
-	reg [7:0] miso_reg;
-	//assign spi_miso = miso_reg[7]; // current output is top bit
+	reg [8:0] miso_reg;
+	//assign spi_miso = miso_reg[8]; // current output is top bit
 	assign spi_miso = miso_reg[output_bit];
 
 	always @(posedge clk)
@@ -94,11 +98,12 @@ module spi_device(
 		spi_rx_cmd <= 0;
 `endif
 
-		if (spi_cs_sync[1])
+		if (reset || spi_cs_sync[1])
 		begin
 			// anytime the spi_cs goes high, reset the bit count
 			cmd_started <= 0;
 			bit_count <= 0;
+			mosi_reg <= ~0;
 		end else
 		if (spi_clk_rising)
 		begin
@@ -117,15 +122,17 @@ module spi_device(
 		end else
 		if (spi_tx_strobe)
 		begin
-			// re-load the output register; this will cause the new
-			// value to appear immediately.
-			miso_reg <= spi_tx_data;
+			// re-load the output register;
+			// this will cause the new value to on the next falling clk
+			miso_reg[7:0] <= spi_tx_data;
 		end else
 		if (spi_clk_falling)
 		begin
+/*
 			// shift out data on the falling edge
 			// maintain the last bit forever
-			//miso_reg <= { miso_reg[6:0], miso_reg[0] };
+			miso_reg <= { miso_reg[7:0], ~miso_reg[0] };
+*/
 		end
 	end
 
@@ -133,8 +140,10 @@ module spi_device(
 	begin
 		if (spi_cs)
 			output_bit <= 7;
-		else
+		else begin
+			//miso_reg <= spi_tx_data;
 			output_bit <= output_bit - 1;
+		end
 	end
 
 
