@@ -87,8 +87,9 @@ module spi_device(
 `endif
 
 	reg [2:0] output_bit;
-	reg [8:0] miso_reg;
-	//assign spi_miso = miso_reg[8]; // current output is top bit
+	reg [7:0] miso_reg;
+	reg [7:0] real_miso_reg;
+	//assign spi_miso = real_miso_reg[7];
 	assign spi_miso = miso_reg[output_bit];
 
 	always @(posedge clk)
@@ -138,10 +139,17 @@ module spi_device(
 
 	always @(negedge spi_clk or posedge spi_cs)
 	begin
-		if (spi_cs)
+		if (spi_cs) begin
+			real_miso_reg <= 8'hFF;
 			output_bit <= 7;
-		else begin
-			//miso_reg <= spi_tx_data;
+		end else begin
+/*
+			if (output_bit == 0)
+				real_miso_reg <= miso_reg;
+			else
+				real_miso_reg[7:1] <= miso_reg[6:0];
+			spi_miso <= miso_reg[output_bit];
+*/
 			output_bit <= output_bit - 1;
 		end
 	end

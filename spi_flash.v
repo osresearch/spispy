@@ -73,7 +73,6 @@ module spi_flash(
 
 			if (!reset && spi_rd_cmd && spi_count == 4)
 			begin
-				log_addr[23] <= 1;
 				log_strobe <= 1;
 			end
 		end else
@@ -109,8 +108,6 @@ module spi_flash(
 			// special case for the next to last bit on the incoming
 			// address.  we have 23 of the 24 bits, which allow us to
 			// fetch a 16-bit wide read.
-			log_len <= 8'hAF;
-			//log_strobe <= 1;
 
 			// not yet shifted
 			ram_addr[7:0] <= { spi_rx_data[6:0], 1'b0 };
@@ -122,8 +119,6 @@ module spi_flash(
 			// normal case, start a fetch for the next byte when
 			// we're half way done with this one
 			// since we know the address will be the next one
-			log_len <= 8'hBF;
-			//log_strobe <= 1;
 
 			ram_addr[7:0] <= ram_addr[7:0] + 1;
 			ram_read_enable <= 1;
@@ -138,17 +133,13 @@ module spi_flash(
 				read_complete <= 1;
 
 				// Special case if we missed the rising edge
+				// and hope that we raced the falling edge
 				if (read_immediate_update)
 				begin
-					log_len <= ram_read_data[7:0];
-					//log_strobe <= 1;
 					spi_tx_strobe <= 1;
 					spi_tx_data <= ram_addr[0]
 						? ram_read_data[15:8]
 						: ram_read_data[7:0];
-				end else begin
-					log_len <= 8'hCF;
-					//log_strobe <= 1;
 				end
 
 				read_immediate_update <= 0;
@@ -197,18 +188,11 @@ module spi_flash(
 				spi_tx_data <= spi_rx_data[0]
 					? ram_read_data[15:8]
 					: ram_read_data[7:0];
-				log_len <= spi_rx_data[0]
-					? ram_read_data[15:8]
-					: ram_read_data[7:0];
-				log_strobe <= 1;
-
 			end else begin
 				// if the read hasn't returned yet, set the
 				// immediate update flag and hope it arrives
 				// before the falling edge
 				read_immediate_update <= 1;
-				log_len <= 8'h23;
-				log_strobe <= 1;
 			end
 		end else
 		if (spi_count == 4)
@@ -227,10 +211,6 @@ module spi_flash(
 				spi_tx_data <= ram_addr[0]
 					? ram_read_data[15:8]
 					: ram_read_data[7:0];
-				log_len <= ram_addr[0]
-					? ram_read_data[15:8]
-					: ram_read_data[7:0];
-				log_strobe <= 1;
 			end else begin
 				// if the read hasn't returned yet, set the
 				// immediate update flag and hope it arrives
