@@ -45,6 +45,7 @@ module top(
 	// with a 180 degree out of phase sdram clk
 	wire clk_132, clk_132_180, locked, reset = !locked || btn[1];
 	pll_132 pll_132_i(clk_25mhz, clk_132, clk_132_180, locked);
+	//pll_140 pll_132_i(clk_25mhz, clk_132, clk_132_180, locked);
 	wire clk = clk_132;
 	wire sdram_clk = clk_132_180; // sdram needs to be stable on the rising edge
 
@@ -54,10 +55,19 @@ module top(
 	wire spi_mosi_pin = gp[18];
 	wire spi_miso_pin = gp[17];
 
-	wire ENABLE_EMULATION = 0;
-	wire spi_timeout;
-	wire spi_cs_enable = spi_critical && !spi_timeout && ENABLE_EMULATION;
+	wire ENABLE_EMULATION = 1;
+	wire ENABLE_TOCTOU = 0; // if there is an existing flash that we're modifying
+
+	// !CS is driven high if we are in TOCTOU mode since the existing flash
+	// chip needs to be turned off.
+	wire spi_cs_enable = spi_critical && !spi_timeout && ENABLE_EMULATION && ENABLE_TOCTOU;
+	// MISO is driven high if we are in emulation mode or TOCTOU mode
+	wire spi_miso_enable = spi_critical && !spi_timeout && ENABLE_EMULATION;
+
+	// if we are driving !CS high, we have to fake a low !CS for the other
+	// parts of our logic.
 	wire spi_cs_fake = spi_cs_enable ? 1'b0 : spi_cs_in;
+
 	wire spi_miso_out;
 	wire spi_miso_in;
 	wire spi_mosi_in;
@@ -67,15 +77,19 @@ module top(
 	wire [7:0] spi_rx_data;
 	wire spi_rx_cmd;
 	wire spi_rx_strobe;
+	wire spi_rx_bit_strobe;
+	wire [2:0] spi_rx_bit;
+	wire spi_timeout;
 
+	(* PULLMODE="UP" *)
 	TRELLIS_IO #(.DIR("BIDIR")) spi_cs_buf(
 		.T(!spi_cs_enable),
 		.B(spi_cs_pin),
-		.I(1), // always high output
+		.I(1), // always high output for TOCTOU, 
 		.O(spi_cs_in),
 	);
 	TRELLIS_IO #(.DIR("BIDIR")) spi_miso_buf(
-		.T(!spi_cs_enable),
+		.T(!spi_miso_enable),
 		.B(spi_miso_pin),
 		.I(spi_miso_out),
 		.O(spi_miso_in),
@@ -92,6 +106,8 @@ module top(
 	wire spi_tx_strobe;
 	wire [7:0] spi_tx_data;
 
+	// we could special case the read command to fetch *both bytes*
+	// once we have 7 of the 8 bits....
 	spi_device spi_i(
 		.clk(clk),
 		.reset(reset),
@@ -100,6 +116,9 @@ module top(
 		.spi_clk(spi_clk_in),
 		.spi_miso(spi_miso_out),
 		.spi_mosi(spi_mosi_in),
+		// bit-wise interface, in the local clk for faster prefetch
+		.spi_rx_bit(spi_rx_bit),
+		.spi_rx_bit_strobe(spi_rx_bit_strobe),
 		// byte wise interface, in the local clk
 		.spi_rx_data(spi_rx_data),
 		.spi_rx_cmd(spi_rx_cmd),
@@ -133,6 +152,8 @@ module top(
 		.spi_rx_data(spi_rx_data),
 		.spi_rx_cmd(spi_rx_cmd),
 		.spi_rx_strobe(spi_rx_strobe),
+		.spi_rx_bit(spi_rx_bit),
+		.spi_rx_bit_strobe(spi_rx_bit_strobe),
 		.spi_tx_strobe(spi_tx_strobe),
 		.spi_tx_data(spi_tx_data),
 
@@ -141,7 +162,7 @@ module top(
 		.ram_addr(spi_read_addr),
 		.ram_read_enable(spi_read_enable), // when an address has been received
 		.ram_read_data(sd_rd_data),
-		.ram_read_valid(spi_critical ? sd_ack : 1'b0),
+		.ram_read_valid(sd_ack),
 
 		// logging interface
 		.log_strobe(spi_log_strobe),
@@ -166,7 +187,8 @@ module top(
 	wire [7:0] uart_rxd;
 
 	uart #(
-		.DIVISOR(44),
+		// .DIVISOR(132 / 3), 132 MHz
+		.DIVISOR(132 / 3),
 		.FIFO(512),
 		.FREESPACE(16),
 	) uart_i(
@@ -187,10 +209,12 @@ module top(
 	parameter ADDR_WIDTH = 24;
 	parameter DATA_WIDTH = 16;
 	wire [DATA_WIDTH-1:0] sd_rd_data;
+	//wire [DATA_WIDTH-1:0] sd_rd_data_raw;
 
 	// the serial user interface has a lower priority access to the sdram
 	wire user_sd_we;
 	wire user_sd_enable;
+	wire [1:0] user_sd_wr_mask;
 	wire [ADDR_WIDTH-1:0] user_sd_addr;
 	wire [DATA_WIDTH-1:0] user_sd_wr_data;
 
@@ -200,11 +224,12 @@ module top(
 	// so it is necessary to shift the address by 1
 	wire sd_we = spi_critical ? 1'b0 : user_sd_we;
 	wire sd_enable = spi_critical ? spi_read_enable : user_sd_enable;
-	wire [ADDR_WIDTH-1:0] sd_addr = { spi_critical ? spi_read_addr : user_sd_addr, 1'b0 };
-	//wire [ADDR_WIDTH-1:0] sd_addr = spi_critical ? spi_read_addr : user_sd_addr;
+	wire [ADDR_WIDTH-1:0] sd_addr = spi_critical ? spi_read_addr : user_sd_addr;
 	wire [DATA_WIDTH-1:0] sd_wr_data = spi_critical ? 16'hDEAD : user_sd_wr_data;
+	wire [1:0] sd_wr_mask = spi_critical ? 2'b00 : user_sd_wr_mask;
 
 	wire sd_ack;
+	//wire sd_ack_raw;
 	wire sd_idle;
 
 	wire	[15:0]	sdram_dq_i;
@@ -242,7 +267,7 @@ module top(
 ////////////////////////////////////////////////////////////////////////
 
 sdram_ctrl #(
-	.CLK_FREQ_MHZ			(132),	// sdram_clk freq in MHZ
+	.CLK_FREQ_MHZ			(144),	// sdram_clk freq in MHZ
 	.POWERUP_DELAY			(200),	// power up delay in us
 	.REFRESH_MS			(32),	// delay between refresh cycles im ms
 	.BURST_LENGTH			(1),	// 1 read at a time
@@ -275,7 +300,7 @@ sdram_ctrl0 (
 	.idle_o		(sd_idle),
 	.adr_i		(sd_addr),
 	.dat_i		(sd_wr_data),
-	.sel_i		(2'b11), // always do both bytes
+	.sel_i		(sd_wr_mask),
 	.acc_i		(sd_enable),
 `define SLOW_RD
 `ifdef SLOW_RD
@@ -308,6 +333,7 @@ sdram_ctrl0 (
 		// sdram interface
 		.sd_addr(user_sd_addr),
 		.sd_we(user_sd_we),
+		.sd_wr_mask(user_sd_wr_mask),
 		.sd_enable(user_sd_enable),
 		.sd_wr_data(user_sd_wr_data),
 		.sd_rd_data(sd_rd_data),
@@ -345,7 +371,7 @@ sdram_ctrl0 (
 			// write it to the serial port if there is space
 			uart_word <= { spi_log_addr[23:0], spi_log_len };
 			uart_words <= 4;
-			led_reg <= spi_log_addr[11:4];
+			//led_reg <= spi_log_addr[11:4];
 
 			counter <= ~0;
 
@@ -365,8 +391,9 @@ sdram_ctrl0 (
 			uart_txd_strobe <= 1;
 			uart_txd <= user_txd;
 		end else begin
-			led_reg[7] <= spi_critical;
-			led_reg[6] <= sd_we;
+			led_reg[7] <= spi_cs_in;
+			led_reg[6] <= spi_critical;
+			led_reg[5] <= sd_we;
 		end
 	end
 endmodule
