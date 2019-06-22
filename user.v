@@ -18,8 +18,9 @@ module user_command_parser(
 
 	// interface to the sdram
 	output reg [ADDR_BITS-1:0] sd_addr,
-	output reg [7:0] sd_wr_data,
-	input [7:0] sd_rd_data,
+	output reg [15:0] sd_wr_data,
+	output reg [1:0] sd_wr_mask,
+	input [15:0] sd_rd_data,
 	input sd_ack,
 	input sd_idle,
 	output reg sd_we,
@@ -151,7 +152,15 @@ module user_command_parser(
 				uart_txd_strobe <= 1;
 				uart_txd <= "%";
 			end
-			sd_wr_data <= uart_rxd;
+
+			// select which byte we're writing
+			if (sd_addr[0]) begin
+				sd_wr_data <= { uart_rxd, 8'h00 };
+				sd_wr_mask <= 2'b10;
+			end else begin
+				sd_wr_data <= { 8'h00, uart_rxd };
+				sd_wr_mask <= 2'b01;
+			end
 			sd_we <= 1;
 			sd_enable <= 1;
 			wr_pending <= 1;
@@ -178,7 +187,7 @@ module user_command_parser(
 				// new byte is available to send
 				sd_enable <= 0;
 				uart_txd <= sd_addr[7:0] + "A"; // sd_rd_data;
-				uart_txd <= sd_rd_data;
+				uart_txd <= sd_addr[0] ? sd_rd_data[15:8] : sd_rd_data[7:0];
 				uart_txd_strobe <= 1;
 				msg_len <= msg_len - 1;
 				sd_addr <= sd_addr + 1;
