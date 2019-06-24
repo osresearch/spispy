@@ -43,8 +43,9 @@ module fifo(
 	assign data_available = read_ptr != write_ptr;
 	wire [BITS-1:0] remaining = read_ptr > write_ptr
 			? read_ptr - write_ptr
-			: (NUM-1) - (write_ptr - read_ptr);
+			: (NUM-1'b1) - (write_ptr - read_ptr);
 	assign space_available = remaining > FREESPACE;
+	//wire space_available = !data_available;
 
 	always @(posedge clk) begin
 		if (reset) begin
