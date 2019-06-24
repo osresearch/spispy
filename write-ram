@@ -1,0 +1,20 @@
+#!/usr/bin/perl
+use warnings;
+use strict;
+
+my $addr = hex(shift);
+
+undef $/;
+my $data = <>;
+
+my $len = length $data;
+
+print "!W",
+	chr(($len >> 16) & 0xFF),
+	chr(($len >>  8) & 0xFF),
+	chr(($len >>  0) & 0xFF),
+	chr(($addr >> 24) & 0xFF),
+	chr(($addr >> 16) & 0xFF),
+	chr(($addr >>  8) & 0xFF),
+	chr(($addr >>  0) & 0xFF),
+	$data;
