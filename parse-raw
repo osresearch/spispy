@@ -1,0 +1,13 @@
+#!/usr/bin/perl
+use warnings;
+use strict;
+
+local $/ = "READ";
+while(<>)
+{
+	chomp;
+	my $addr = hex unpack("H*", substr($_, 0, 3));
+	my $hexdump = unpack("H*", substr($_, 3));
+	$hexdump =~ s/(..)/$1 /g;
+	printf "%08x: %s\n", $addr, $hexdump;
+}
