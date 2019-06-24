@@ -45,7 +45,7 @@ module top(
 	// with a 180 degree out of phase sdram clk
 	wire clk_132, clk_132_180, locked, reset = !locked || btn[1];
 	pll_132 pll_132_i(clk_25mhz, clk_132, clk_132_180, locked);
-	//pll_140 pll_132_i(clk_25mhz, clk_132, clk_132_180, locked);
+	//pll_96 pll_132_i(clk_25mhz, clk_132, clk_132_180, locked);
 	wire clk = clk_132;
 	wire sdram_clk = clk_132_180; // sdram needs to be stable on the rising edge
 
@@ -54,6 +54,7 @@ module top(
 	wire spi_clk_pin = gp[19];
 	wire spi_mosi_pin = gp[18];
 	wire spi_miso_pin = gp[17];
+	wire spi_cs_out_pin = gp[16]; // for toctou on a flash without pullup
 
 	wire ENABLE_EMULATION = 1;
 	wire ENABLE_TOCTOU = 0; // if there is an existing flash that we're modifying
@@ -62,11 +63,12 @@ module top(
 	// chip needs to be turned off.
 	wire spi_cs_enable = spi_critical && !spi_timeout && ENABLE_EMULATION && ENABLE_TOCTOU;
 	// MISO is driven high if we are in emulation mode or TOCTOU mode
-	wire spi_miso_enable = spi_critical && !spi_timeout && ENABLE_EMULATION;
+	//wire spi_miso_enable = spi_critical && !spi_timeout && ENABLE_EMULATION;
+	wire spi_miso_enable = spi_critical && ENABLE_EMULATION;
 
 	// if we are driving !CS high, we have to fake a low !CS for the other
 	// parts of our logic.
-	wire spi_cs_fake = spi_cs_enable ? 1'b0 : spi_cs_in;
+	wire spi_cs_fake = ENABLE_TOCTOU && spi_cs_enable ? 1'b0 : spi_cs_in;
 
 	wire spi_miso_out;
 	wire spi_miso_in;
@@ -81,7 +83,8 @@ module top(
 	wire [2:0] spi_rx_bit;
 	wire spi_timeout;
 
-	(* PULLMODE="UP" *)
+`define EMU
+`ifdef EMU
 	TRELLIS_IO #(.DIR("BIDIR")) spi_cs_buf(
 		.T(!spi_cs_enable),
 		.B(spi_cs_pin),
@@ -94,6 +97,28 @@ module top(
 		.I(spi_miso_out),
 		.O(spi_miso_in),
 	);
+	TRELLIS_IO #(.DIR("OUTPUT")) spi_cs_out_buf(
+		.B(spi_cs_out_pin),
+		.I(1), // never select the other flash
+	);
+`else
+	TRELLIS_IO #(.DIR("INPUT")) spi_cs_buf(
+		.T(!spi_cs_enable),
+		.B(spi_cs_pin),
+		.I(1), // always high output for TOCTOU, 
+		.O(spi_cs_in),
+	);
+	TRELLIS_IO #(.DIR("INPUT")) spi_miso_buf(
+		.T(!spi_miso_enable),
+		.B(spi_miso_pin),
+		.I(spi_miso_out),
+		.O(spi_miso_in),
+	);
+	TRELLIS_IO #(.DIR("OUTPUT")) spi_cs_out_buf(
+		.B(spi_cs_out_pin),
+		.I(spi_cs_in), // copy the input pin to the output
+	);
+`endif
 	TRELLIS_IO #(.DIR("INPUT")) spi_mosi_buf(
 		.B(spi_mosi_pin),
 		.O(spi_mosi_in),
@@ -132,11 +157,13 @@ module top(
 	// there is a race condition with asserting this while the bus is busy
 	// so don't mix serial operations with booting the machine right now
 	wire spi_critical;
+	wire spi_refresh_inhibit;
 
 	// these will be written to the serial port
 	wire [31:0] spi_log_addr;
 	wire [7:0] spi_log_len;
 	wire spi_log_strobe;
+	wire [7:0] spi_errors;
 
 	// interface to the memory
 	wire [31:0] spi_read_addr;
@@ -159,6 +186,7 @@ module top(
 
 		// memory interface
 		.spi_critical(spi_critical),
+		.ram_refresh_inhibit(spi_refresh_inhibit),
 		.ram_addr(spi_read_addr),
 		.ram_read_enable(spi_read_enable), // when an address has been received
 		.ram_read_data(sd_rd_data),
@@ -168,11 +196,12 @@ module top(
 		.log_strobe(spi_log_strobe),
 		.log_addr(spi_log_addr),
 		.log_len(spi_log_len),
+		.errors(spi_errors),
 	);
 
 	// oscilloscope debug pins also on jp2
 	wire debug_0 = spi_miso_in;
-	wire debug_1 = spi_miso_out;
+	wire debug_1 = sd_ack; // spi_miso_out;
 	reg trigger;
 	TRELLIS_IO #(.DIR("OUTPUT")) debug0(.B(gp[26]), .I(trigger));
 	TRELLIS_IO #(.DIR("OUTPUT")) debug2(.B(gp[27]), .I(debug_0));
@@ -187,9 +216,9 @@ module top(
 	wire [7:0] uart_rxd;
 
 	uart #(
-		// .DIVISOR(132 / 3), 132 MHz
-		.DIVISOR(132 / 3),
-		.FIFO(512),
+		.DIVISOR(132 / 3), // 132 MHz
+		//.DIVISOR(96 / 3),
+		.FIFO(65536),
 		.FREESPACE(16),
 	) uart_i(
 		.clk(clk),
@@ -215,7 +244,7 @@ module top(
 	wire user_sd_we;
 	wire user_sd_enable;
 	wire [1:0] user_sd_wr_mask;
-	wire [ADDR_WIDTH-1:0] user_sd_addr;
+	wire [31:0] user_sd_addr;
 	wire [DATA_WIDTH-1:0] user_sd_wr_data;
 
 	// the spi bus can take control of the ram by asserting the spi_critical
@@ -224,11 +253,16 @@ module top(
 	// so it is necessary to shift the address by 1
 	wire sd_we = spi_critical ? 1'b0 : user_sd_we;
 	wire sd_enable = spi_critical ? spi_read_enable : user_sd_enable;
-	wire [ADDR_WIDTH-1:0] sd_addr = spi_critical ? spi_read_addr : user_sd_addr;
+	wire [31:0] sd_addr = spi_critical ? spi_read_addr : user_sd_addr;
 	wire [DATA_WIDTH-1:0] sd_wr_data = spi_critical ? 16'hDEAD : user_sd_wr_data;
 	wire [1:0] sd_wr_mask = spi_critical ? 2'b00 : user_sd_wr_mask;
 
-	wire sd_ack;
+	// convert the sd_ack signal from a level to an edge sensitive
+	reg sd_ack_prev;
+	wire sd_ack = sd_ack_level && !sd_ack_prev;
+	wire sd_ack_level;
+	always @(posedge clk) sd_ack_prev <= sd_ack_level;
+
 	//wire sd_ack_raw;
 	wire sd_idle;
 
@@ -237,8 +271,8 @@ module top(
 	wire		sdram_dq_oe;
 
 	// generate an sdram reset controller
-	wire sd_refresh_inhibit = spi_critical;
-	reg sd_pause_read = 0;
+	wire sd_refresh_inhibit = spi_critical && spi_refresh_inhibit;
+	wire sd_pause_read = 0;
 	reg [15:0] sdram_reset_counter;
 	wire sdram_reset = sdram_reset_counter != 0;
 	always @(posedge clk or posedge reset)
@@ -267,7 +301,7 @@ module top(
 ////////////////////////////////////////////////////////////////////////
 
 sdram_ctrl #(
-	.CLK_FREQ_MHZ			(144),	// sdram_clk freq in MHZ
+	.CLK_FREQ_MHZ			(132),	// sdram_clk freq in MHZ
 	.POWERUP_DELAY			(200),	// power up delay in us
 	.REFRESH_MS			(32),	// delay between refresh cycles im ms
 	.BURST_LENGTH			(1),	// 1 read at a time
@@ -305,7 +339,7 @@ sdram_ctrl0 (
 `define SLOW_RD
 `ifdef SLOW_RD
 	.dat_o		(sd_rd_data),
-	.ack_o		(sd_ack),
+	.ack_o		(sd_ack_level),
 `else
 	.dat_raw	(sd_rd_data),
 	.ack_raw	(sd_ack),
@@ -341,13 +375,17 @@ sdram_ctrl0 (
 		.sd_idle(spi_critical ? 1'b0 : sd_idle),
 	);
 
-	reg [2:0] uart_words;
-	reg [31:0] uart_word;
+	reg [3:0] uart_words;
+	reg [63:0] uart_word;
 	reg user_sd_enable_prev;
 	always @(posedge clk) user_sd_enable_prev <= user_sd_enable;
 	wire user_sd_enable_rising = user_sd_enable && !user_sd_enable_prev;
 
 	reg [4:0] counter;
+
+	reg [1:0] spi_cs_prev;
+	reg spi_cs_falling = spi_cs_prev[1] && !spi_cs_prev[0];
+	always @(posedge clk) spi_cs_prev <= { spi_cs_prev[0], spi_cs_in };
 
 	always @(posedge clk)
 	begin
@@ -365,35 +403,46 @@ sdram_ctrl0 (
 		begin
 			led_reg <= uart_rxd;
 		end else
-		if (spi_log_strobe && uart_txd_ready)
+		
+		if (spi_log_strobe) // && uart_txd_ready)
 		begin
 			// a SPI transaction has just occured;
 			// write it to the serial port if there is space
-			uart_word <= { spi_log_addr[23:0], spi_log_len };
-			uart_words <= 4;
+			uart_word <= { "READ", spi_log_addr[23:0], spi_log_len };
+			//if (spi_log_addr[23:16] == 8'h18)
+				uart_words <= 8;
 			//led_reg <= spi_log_addr[11:4];
 
 			counter <= ~0;
 
 			if (spi_log_addr[23:0] == 24'h000010)
+			//if (spi_log_addr[23:0] == 24'h001810)
+			begin
 				trigger <= 1;
+			end
 		end else
-		if (uart_words != 0 && uart_txd_ready)
+		if (uart_words != 0) // && uart_txd_ready)
 		begin
 			uart_words <= uart_words - 1;
 			uart_txd_strobe <= 1;
 			uart_txd <= "0" + uart_words; // uart_word[31:24];
-			uart_txd <= uart_word[31:24];
+			uart_txd <= uart_word[63:56];
 			uart_word <= uart_word << 8;
+		end else
+		if (spi_tx_strobe) // && spi_log_addr[23:16] == 8'h18)
+		begin
+			uart_txd_strobe <= 1;
+			uart_txd <= spi_log_len; // spi_tx_data;
 		end else
 		if (user_txd_strobe && uart_txd_ready)
 		begin
 			uart_txd_strobe <= 1;
 			uart_txd <= user_txd;
 		end else begin
-			led_reg[7] <= spi_cs_in;
-			led_reg[6] <= spi_critical;
-			led_reg[5] <= sd_we;
+			led_reg[0] <= spi_cs_in;
+			led_reg[1] <= spi_critical;
+			led_reg[3] <= sd_we;
+			led_reg[7:4] <= spi_errors[7:4];
 		end
 	end
 endmodule
