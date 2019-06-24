@@ -1,13 +1,37 @@
 #!/usr/bin/perl
 use warnings;
 use strict;
+use Path::Tiny;
+
+my $file = shift;
+my $rom = '';
+if ($file) {
+	$rom = path($file)->slurp_raw()
+		or die "$file: $!\n";
+}
 
 local $/ = "READ";
 while(<>)
 {
 	chomp;
 	my $addr = hex unpack("H*", substr($_, 0, 3));
-	my $hexdump = unpack("H*", substr($_, 3));
+
+	# ignore the last byte since it is probably prefetched but not sent
+	my $bytes = substr($_, 3, -1);
+	my $hexdump = unpack("H*", $bytes);
 	$hexdump =~ s/(..)/$1 /g;
 	printf "%08x: %s\n", $addr, $hexdump;
+
+	# if the read is within ROM range, validate it
+	if ($addr + length $bytes < length $rom)
+	{
+		my $real_bytes = substr($rom, $addr, length($bytes));
+		$hexdump = unpack("H*", $real_bytes);
+		$hexdump =~ s/(..)/$1 /g;
+		printf "-- EXPCTD %s\n", $hexdump
+			unless $bytes eq $real_bytes;
+	} else {
+		print "--- OUT OF RANGE\n"
+			if $rom;
+	}
 }
