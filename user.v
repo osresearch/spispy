@@ -28,7 +28,7 @@ module user_command_parser(
 );
 	parameter ADDR_BITS = 32;
 
-	reg [20:0] counter;
+	reg [8:0] counter;
 
 	reg wr_pending;
 	reg rd_pending;
@@ -195,6 +195,8 @@ module user_command_parser(
 			end else
 			if (!rd_pending
 			&& uart_txd_ready
+			&& !uart_txd_strobe
+			&& counter == 0
 			&& sd_idle
 			&& !sd_enable)
 			begin
