@@ -387,6 +387,9 @@ sdram_ctrl0 (
 	reg spi_cs_falling = spi_cs_prev[1] && !spi_cs_prev[0];
 	always @(posedge clk) spi_cs_prev <= { spi_cs_prev[0], spi_cs_in };
 
+	parameter LOG_ALL_BYTES = 0;
+	parameter VERBOSE_LOGGING = 0;
+
 	always @(posedge clk)
 	begin
 		uart_txd_strobe <= 0;
@@ -408,9 +411,15 @@ sdram_ctrl0 (
 		begin
 			// a SPI transaction has just occured;
 			// write it to the serial port if there is space
-			uart_word <= { "READ", spi_log_addr[23:0], spi_log_len };
+			if (VERBOSE_LOGGING) begin
+				uart_word <= { "READ", spi_log_addr[23:0], spi_log_len };
 			//if (spi_log_addr[23:16] == 8'h18)
 				uart_words <= 8;
+			end else begin
+				uart_word <= { spi_log_addr[23:0], spi_log_len, 32'b0 };
+				uart_words <= 4;
+			end
+
 			//led_reg <= spi_log_addr[11:4];
 
 			counter <= ~0;
@@ -425,11 +434,10 @@ sdram_ctrl0 (
 		begin
 			uart_words <= uart_words - 1;
 			uart_txd_strobe <= 1;
-			uart_txd <= "0" + uart_words; // uart_word[31:24];
 			uart_txd <= uart_word[63:56];
 			uart_word <= uart_word << 8;
 		end else
-		if (spi_tx_strobe) // && spi_log_addr[23:16] == 8'h18)
+		if (spi_tx_strobe && LOG_ALL_BYTES)
 		begin
 			uart_txd_strobe <= 1;
 			uart_txd <= spi_log_len; // spi_tx_data;

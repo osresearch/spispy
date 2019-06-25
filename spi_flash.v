@@ -33,6 +33,8 @@ module spi_flash(
 	output reg log_strobe,
 	output reg [7:0] errors
 );
+	parameter VERBOSE_LOGGING = 0;
+
 	reg spi_tx_strobe;
 	reg spi_tx_data;
 
@@ -111,7 +113,10 @@ module spi_flash(
 
 			if (spi_cs_rising && spi_rd_cmd && spi_count == 4)
 			begin
-				//log_strobe <= 1;
+				// without verbose logging this is the time
+				// to notify that we've had a read transaction
+				if (!VERBOSE_LOGGING)
+					log_strobe <= 1;
 			end
 		end else
 		if (spi_rx_cmd)
@@ -270,19 +275,23 @@ module spi_flash(
 					? ram_read_data[15:8]
 					: ram_read_data[7:0];
 
-				log_strobe <= 1;
-				log_len <= spi_rx_data[0]
-					? ram_read_data[15:8]
-					: ram_read_data[7:0];
+				if (VERBOSE_LOGGING) begin
+					log_strobe <= 1;
+					log_len <= spi_rx_data[0]
+						? ram_read_data[15:8]
+						: ram_read_data[7:0];
+				end
 			end else begin
 				// if the read hasn't returned yet, set the
 				// immediate update flag and hope it arrives
 				// before the falling edge
 				read_immediate_update <= 1;
 				errors[6] <= 1;
-				log_addr <= "LOST";
-				log_len <= 8'hAF;
-				log_strobe <= 1;
+				if (VERBOSE_LOGGING) begin
+					log_addr <= "LOST";
+					log_len <= 8'hAF;
+					log_strobe <= 1;
+				end
 			end
 
 		end else
@@ -306,10 +315,12 @@ module spi_flash(
 
 				log_len <= cycles;
 				cycles <= 0;
-				log_len <= ram_addr[0]
-					? ram_read_data[15:8]
-					: ram_read_data[7:0];
-				//log_len <= ram_addr[7:0];
+				if (VERBOSE_LOGGING) begin
+					log_len <= ram_addr[0]
+						? ram_read_data[15:8]
+						: ram_read_data[7:0];
+					//log_len <= ram_addr[7:0];
+				end
 			end else begin
 				// if the read hasn't returned yet, set the
 				// immediate update flag and hope it arrives
