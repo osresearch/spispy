@@ -236,8 +236,8 @@ module spi_flash(
 		end else
 		if (spi_count == 2)
 		begin
-			log_addr[15:7] <= spi_rx_data;
-			ram_addr[15:7] <= spi_rx_data;
+			log_addr[15:8] <= spi_rx_data;
+			ram_addr[15:8] <= spi_rx_data;
 			spi_count <= 3;
 
 			// we have enough to start the SDRAM row activation
