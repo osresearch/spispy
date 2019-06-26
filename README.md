@@ -17,18 +17,20 @@ difficult timing requirements of the SPI flash protocol (described below).
 ## Supported features
 * Single SPI up to 20 MHz clock
 * 3-byte addressing (up to 16 MB of flash image)
-* Serial port updates to the SDRAM
-* Logging flash access patterns
+* Serial port updates to the SDRAM (could be faster [issue #11](issues/11)]
+and could be better [issue #3](issues/3))
+* Logging flash access patterns (could be longer, [issue #5](issues/5))
 * TOCTOU changes to the flash image based on read patterns
 
 ## Not yet supported
-* Multiple `!CS` pins
-* Dual- and Quad-SPI
-* Fast read command
-* Erase/Write emulation
-* Status registers
-* Block protection bits
-* BeagleBone Black integration
+* Dual- and Quad-SPI ([issue #1](issues/1))
+* Multiple `!CS` pins ([issue #7](issues/7))
+* Fast read command ([issue #1](issues/1))
+* Erase/Write emulation ([issue #12](issues/12))
+* SFDP pages ([issue #9](issues/9))
+* Status registers (partially supported, could be better)
+* Block protection bits (maybe worth it, probably not)
+* Linux RISC-V core
   * Serial port for console
   * Higher bandwidth programming over GPMC
   * A decent API for TOCTOU
@@ -61,7 +63,7 @@ testing is necessary.
 *IMPORTANT NOTE* the system currently uses 3.3v signalling for the SPI bus.
 If you have more modern system, it _might_ use 1.8v and driving it at the higher
 voltage can cause problems.  We need to test this and figure out if alternate
-output voltages can be selected on the pins.
+output voltages can be selected on the pins. ([issue #10](issues/10))
 
 
 # Protocol
