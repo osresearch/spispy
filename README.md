@@ -17,17 +17,17 @@ difficult timing requirements of the SPI flash protocol (described below).
 ## Supported features
 * Single SPI up to 20 MHz clock
 * 3-byte addressing (up to 16 MB of flash image)
-* Serial port updates to the SDRAM (could be faster [issue #11](/osresearch/spispy/issues/11)]
-and could be better [issue #3](/osresearch/spispy/issues/3))
-* Logging flash access patterns (could be longer, [issue #5](/osresearch/spispy/issues/5))
+* Serial port updates to the SDRAM (could be faster [issue #11](https://github.com/osresearch/spispy/issues/11)]
+and could be better [issue #3](https://github.com/osresearch/spispy/issues/3))
+* Logging flash access patterns (could be longer, [issue #5](https://github.com/osresearch/spispy/issues/5))
 * TOCTOU changes to the flash image based on read patterns
 
 ## Not yet supported
-* Dual- and Quad-SPI ([issue #1](/osresearch/spispy/issues/1))
-* Multiple `!CS` pins ([issue #7](/osresearch/spispy/issues/7))
-* Fast read command ([issue #1](/osresearch/spispy/issues/1))
-* Erase/Write emulation ([issue #12](/osresearch/spispy/issues/12))
-* SFDP pages ([issue #9](/osresearch/spispy/issues/9))
+* Dual- and Quad-SPI ([issue #1](https://github.com/osresearch/spispy/issues/1))
+* Multiple `!CS` pins ([issue #7](https://github.com/osresearch/spispy/issues/7))
+* Fast read command ([issue #1](https://github.com/osresearch/spispy/issues/1))
+* Erase/Write emulation ([issue #12](https://github.com/osresearch/spispy/issues/12))
+* SFDP pages ([issue #9](https://github.com/osresearch/spispy/issues/9))
 * Status registers (partially supported, could be better)
 * Block protection bits (maybe worth it, probably not)
 * Linux RISC-V core
@@ -63,7 +63,7 @@ testing is necessary.
 *IMPORTANT NOTE* the system currently uses 3.3v signalling for the SPI bus.
 If you have more modern system, it _might_ use 1.8v and driving it at the higher
 voltage can cause problems.  We need to test this and figure out if alternate
-output voltages can be selected on the pins. ([issue #10](/osresearch/spispy/issues/10))
+output voltages can be selected on the pins. ([issue #10](https://github.com/osresearch/spispy/issues/10))
 
 
 # Protocol
