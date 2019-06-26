@@ -2,10 +2,12 @@
 
 # SPI Spy: Flash emulation
 
-The SPI Spy tool is an open source (both hardware and software)
-SPI flash emulation tool.  It an store a flash image in the SDRAM
+The SPI Spy is an open source (both hardware and software)
+SPI flash emulation tool.  It can store a flash image in the SDRAM
 connected to the FPGA and serve the image to a host CPU over the
-SPI bus.
+SPI bus.  This allows you to avoid the lengthy SPI flash erase/write
+cycles during firmware development as well as to more easily explore
+early boot time security against TOCTOU attacks.
 
 ## Platform
 The design is currently based on the [ULX3S](https://radiona.org/ulx3s/)
@@ -30,10 +32,11 @@ and could be better [issue #3](https://github.com/osresearch/spispy/issues/3))
 * SFDP pages ([issue #9](https://github.com/osresearch/spispy/issues/9))
 * Status registers (partially supported, could be better)
 * Block protection bits (maybe worth it, probably not)
-* Linux RISC-V core
+* Linux RISC-V core in the FPGA
   * Serial port for console
-  * Higher bandwidth programming over GPMC
-  * A decent API for TOCTOU
+  * Higher bandwidth programming over separate USB endpoint ([issue #11](https://github.com/osresearch/spispy/issues/11))
+  * Default flash image on SD card
+  * A decent API for TOCTOU exploration
 
 # Wiring
 
