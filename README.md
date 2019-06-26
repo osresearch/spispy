@@ -35,21 +35,40 @@ difficult timing requirements of the SPI flash protocol (described below).
 
 # Wiring
 
+![8-SOIC chip clip and !CS pin mod](images/clip.jpg)
+
 Typical 8-SOIC and 8-DIP flash chips:
 
 ```
             +------+
-    !CE  ---| o    |----  +V
+    !CS  ---| o    |----  +V
      SO  ---|      |---- !RST
     !WP  ---|      |----  SCK
     GND  ---|      |----  SI
             +------+
 ```
 
+If there is a series resistor on the `!CS` pin, it might be possible to clip
+directly to the chip with a Pomona 8-SOIC "chip clip" and use TOCTOU mode to
+override the signal from the PCH.  However, this doesn't always work so sometimes
+it is necessary to desolder pin 1 from the board, bend the leg upwards and solder
+a jumper wire to the pad on the maiboard as shown in the above photo.
+
+If the board has a "Dediprog" or programming header it might be possible to attach
+directly to the header and also override the chip select pin, although more
+testing is necessary.
+
+*IMPORTANT NOTE* the system currently uses 3.3v signalling for the SPI bus.
+If you have more modern system, it _might_ use 1.8v and driving it at the higher
+voltage can cause problems.  We need to test this and figure out if alternate
+output voltages can be selected on the pins.
+
+
 # Protocol
 ![SPI data](images/data.jpg)
 
-The SPI protocol is difficult to emulate without specialized hardware
+The [SPI protocol](https://www.winbond.com/resource-files/w25q256fv_revg1_120214_qpi_website_rev_g.pdf)
+is difficult to emulate without specialized hardware
 since it has very demanding timing requirements.  The flash device
 has no control over the clock and must be able to respond to a random
 read request on the very next clock.  At 20 MHz, the slowest SPI bus
