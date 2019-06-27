@@ -33,12 +33,14 @@ module spi_device(
 	input	spi_clk,
 	input	spi_cs,
 	input	spi_mosi,
+	input	spi_miso_in, // monitor mode
 	output	spi_miso,
 	output  spi_rx_cmd, // set for the first byte of a new transaction
 	output	spi_rx_strobe,
 	output	spi_rx_bit_strobe,
 	output [2:0] spi_rx_bit,
 	output [7:0] spi_rx_data,
+	output [7:0] spi_rx_miso, // monitor mode
 	input [7:0] spi_tx_data,
 	input spi_tx_strobe, // reload the output register
 	output spi_timeout
@@ -47,12 +49,14 @@ module spi_device(
 	reg [DELAY:0] spi_cs_sync;
 	reg [DELAY:0] spi_clk_sync;
 	reg [DELAY:0] spi_mosi_sync;
+	reg [DELAY:0] spi_miso_in_sync;
 	wire spi_clk_falling = spi_clk_sync[DELAY] && !spi_clk_sync[DELAY-1];
 	wire spi_clk_rising = !spi_clk_sync[DELAY] && spi_clk_sync[DELAY-1];
 	always @(posedge clk) begin
 		spi_cs_sync <= { spi_cs_sync[DELAY-1:0], spi_cs };
 		spi_clk_sync <= { spi_clk_sync[DELAY-1:0], spi_clk };
 		spi_mosi_sync <= { spi_mosi_sync[DELAY-1:0], spi_mosi };
+		spi_miso_in_sync <= { spi_miso_in_sync[DELAY-1:0], spi_miso_in };
 	end
 
 	// track how long since the last clock and abort the transaction
@@ -69,13 +73,16 @@ module spi_device(
 
 	reg [2:0] bit_count;
 	reg [7:0] mosi_reg;
+	reg [7:0] miso_in_reg;
 	wire [7:0] mosi_reg_next = { mosi_reg[6:0], spi_mosi_sync[DELAY] };
+	wire [7:0] miso_in_reg_next = { miso_in_reg[6:0], spi_miso_in_sync[DELAY] };
 	reg cmd_started;
 
 `define SPI_UNLATCHED
 `ifdef SPI_UNLATCHED
 	// these are unlatched so that they are available immediately
 	assign spi_rx_data = mosi_reg_next;
+	assign spi_rx_miso = miso_in_reg_next;
 	assign spi_rx_strobe = spi_rx_bit == 7 && spi_rx_bit_strobe;
 	assign spi_rx_cmd = spi_rx_strobe && cmd_started == 0;
 `else
@@ -115,6 +122,7 @@ module spi_device(
 			// shift in the rx data on the rising edge
 			bit_count <= bit_count + 1;
 			mosi_reg <= mosi_reg_next;
+			miso_in_reg <= miso_in_reg_next;
 
 			if (bit_count == 7)
 			begin

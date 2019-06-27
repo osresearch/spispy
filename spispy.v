@@ -35,6 +35,8 @@ module top(
 	// buttons for user io
 	input [6:0] btn,
 );
+	parameter MONITOR_MODE = 1;
+
 	// gpio0 must be tied high to prevent board from rebooting
 	assign wifi_gpio0 = 1;
 
@@ -61,10 +63,10 @@ module top(
 
 	// !CS is driven high if we are in TOCTOU mode since the existing flash
 	// chip needs to be turned off.
-	wire spi_cs_enable = spi_critical && !spi_timeout && ENABLE_EMULATION && ENABLE_TOCTOU;
+	wire spi_cs_enable = spi_critical && !spi_timeout && ENABLE_EMULATION && ENABLE_TOCTOU && !MONITOR_MODE;
 	// MISO is driven high if we are in emulation mode or TOCTOU mode
 	//wire spi_miso_enable = spi_critical && !spi_timeout && ENABLE_EMULATION;
-	wire spi_miso_enable = spi_critical && ENABLE_EMULATION;
+	wire spi_miso_enable = spi_critical && ENABLE_EMULATION && !MONITOR_MODE;
 
 	// if we are driving !CS high, we have to fake a low !CS for the other
 	// parts of our logic.
@@ -130,6 +132,7 @@ module top(
 
 	wire spi_tx_strobe;
 	wire [7:0] spi_tx_data;
+	wire [7:0] spi_rx_miso;
 
 	// we could special case the read command to fetch *both bytes*
 	// once we have 7 of the 8 bits....
@@ -141,11 +144,13 @@ module top(
 		.spi_clk(spi_clk_in),
 		.spi_miso(spi_miso_out),
 		.spi_mosi(spi_mosi_in),
+		.spi_miso_in(spi_miso_in),
 		// bit-wise interface, in the local clk for faster prefetch
 		.spi_rx_bit(spi_rx_bit),
 		.spi_rx_bit_strobe(spi_rx_bit_strobe),
 		// byte wise interface, in the local clk
 		.spi_rx_data(spi_rx_data),
+		.spi_rx_miso(spi_rx_miso),
 		.spi_rx_cmd(spi_rx_cmd),
 		.spi_rx_strobe(spi_rx_strobe),
 		.spi_tx_data(spi_tx_data),
@@ -390,6 +395,8 @@ sdram_ctrl0 (
 	parameter LOG_ALL_BYTES = 0;
 	parameter VERBOSE_LOGGING = 0;
 
+	reg [15:0] spi_rx_bytes;
+
 	always @(posedge clk)
 	begin
 		uart_txd_strobe <= 0;
@@ -405,6 +412,32 @@ sdram_ctrl0 (
 		if (uart_rxd_strobe)
 		begin
 			led_reg <= uart_rxd;
+		end else
+
+		if (MONITOR_MODE) begin
+			if (spi_rx_strobe)
+			begin
+				if (spi_rx_cmd)
+					spi_rx_bytes <= 1;
+				else
+					spi_rx_bytes <= spi_rx_bytes + 1;
+
+				uart_word <= {
+					spi_rx_cmd ? 16'h0000 : spi_rx_bytes,
+					spi_rx_data,
+					spi_rx_miso,
+					32'h00000000
+				};
+
+				uart_words <= 4;
+			end else
+			if (uart_words != 0) // && uart_txd_ready)
+			begin
+				uart_words <= uart_words - 1;
+				uart_txd_strobe <= 1;
+				uart_txd <= uart_word[63:56];
+				uart_word <= uart_word << 8;
+			end
 		end else
 		
 		if (spi_log_strobe) // && uart_txd_ready)
