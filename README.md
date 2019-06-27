@@ -22,6 +22,7 @@ difficult timing requirements of the SPI flash protocol (described below).
 * Serial port updates to the SDRAM (could be faster [issue #11](https://github.com/osresearch/spispy/issues/11)]
 and could be better [issue #3](https://github.com/osresearch/spispy/issues/3))
 * Logging flash access patterns (could be longer, [issue #5](https://github.com/osresearch/spispy/issues/5))
+* SFDP pages ([with some caveats](https://github.com/osresearch/spispy/issues/9))
 * TOCTOU changes to the flash image based on read patterns
 
 ## Not yet supported
@@ -29,7 +30,6 @@ and could be better [issue #3](https://github.com/osresearch/spispy/issues/3))
 * Multiple `!CS` pins ([issue #7](https://github.com/osresearch/spispy/issues/7))
 * Fast read command ([issue #1](https://github.com/osresearch/spispy/issues/1))
 * Erase/Write emulation ([issue #12](https://github.com/osresearch/spispy/issues/12))
-* SFDP pages ([issue #9](https://github.com/osresearch/spispy/issues/9))
 * Status registers (partially supported, could be better)
 * Block protection bits (maybe worth it, probably not)
 * Linux RISC-V core in the FPGA
