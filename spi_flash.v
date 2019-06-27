@@ -1,6 +1,11 @@
 /*
  * SPI Flash device.
  *
+ * This implements may of the JEDEC standard SPI flash commands to emulate
+ * a common serial flash device.  It is not a very comprehensive design;
+ * there is no /HOLD or /WP support, nor are many of the fancy modes implemented.
+ *
+ * Modern hardware requires SFDP, so it is included.
  */
 `ifndef _spi_flash_v_
 `define _spi_flash_v_
@@ -34,6 +39,7 @@ module spi_flash(
 	output reg [7:0] errors
 );
 	parameter VERBOSE_LOGGING = 0;
+	parameter SFDP_OFFSET = 8'h01; // above the 16 MB normal memory
 
 	reg spi_tx_strobe;
 	reg spi_tx_data;
@@ -45,6 +51,7 @@ module spi_flash(
 
 	reg [2:0] spi_count;
 	reg spi_rd_cmd;
+	reg spi_rd_dummy; // if there is an extra byte before the data
 
 	// as soon as we detect the start of a read command, lock the sdram
 	// control for our exclusive access
@@ -61,13 +68,17 @@ module spi_flash(
 
 	// commands are documented in various SPI flash datasheets,
 	// such as https://www.winbond.com/resource-files/w25q256fv_revg1_120214_qpi_website_rev_g.pdf
+	localparam SPI_CMD_PP3	= 8'h02;
 	localparam SPI_CMD_READ	= 8'h03;
 	localparam SPI_CMD_WRDS	= 8'h04;
 	localparam SPI_CMD_RDSR	= 8'h05;
 	localparam SPI_CMD_WREN	= 8'h06;
+	localparam SPI_CMD_ERASE= 8'h20;
+	localparam SPI_CMD_SFDP = 8'h5a;
 	localparam SPI_CMD_RDID = 8'h9F;
 
-	reg [23:0] spi_jid0 = { 8'hC2, 8'h20, 8'h17 }; // 8 MB flash chip
+	reg spi_rdid = 0;
+	reg [23:0] spi_jid0 = { 8'hC2, 8'h20, 8'h18 }; // 16 MB flash chip
 
 	reg spi_status_srp0 = 0;
 	reg spi_status_tb = 0;
@@ -97,6 +108,7 @@ module spi_flash(
 			ram_refresh_inhibit <= 0;
 			ram_read_enable <= 0;
 			read_immediate_update <= 0;
+			spi_rdid <= 0;
 		end else
 		if (spi_cs_sync) begin
 			// no longer asserted, release our locks and signal
@@ -104,6 +116,7 @@ module spi_flash(
 			spi_critical <= 0;
 			spi_count <= 0;
 			spi_rd_cmd <= 0;
+			spi_rdid <= 0;
 			ram_refresh_inhibit <= 0;
 			ram_read_enable <= 0;
 			read_immediate_update <= 0;
@@ -115,7 +128,7 @@ module spi_flash(
 			begin
 				// without verbose logging this is the time
 				// to notify that we've had a read transaction
-				if (!VERBOSE_LOGGING)
+				if (!VERBOSE_LOGGING && !spi_rdid)
 					log_strobe <= 1;
 			end
 		end else
@@ -137,9 +150,19 @@ module spi_flash(
 				spi_critical <= 1;
 				ram_refresh_inhibit <= 1;
 				spi_rd_cmd <= 1;
+				ram_addr[31:24] <= 0;
+				spi_rd_dummy <= 0;
+			end
+			SPI_CMD_SFDP: begin
+				spi_critical <= 1;
+				ram_refresh_inhibit <= 1;
+				spi_rd_cmd <= 1;
+				ram_addr[31:24] <= SFDP_OFFSET;
+				spi_rd_dummy <= 1;
 			end
 			SPI_CMD_WREN: begin
 				// write enable. narf
+				spi_critical <= 1;
 				log_addr <= { 16'hBAD0, spi_rx_data };
 				log_strobe <= 1;
 				spi_status_wrel <= 1;
@@ -147,6 +170,25 @@ module spi_flash(
 			end
 			SPI_CMD_WRDS: begin
 				// write disable
+				spi_critical <= 1;
+				spi_status_wrel <= 0;
+				log_addr <= { 16'hBAD0, spi_rx_data };
+				log_strobe <= 1;
+				errors[5] <= 1;
+			end
+			SPI_CMD_PP3: begin
+				// page program 3-byte (ignored)
+				// but this does clear the latch
+				spi_critical <= 1;
+				spi_status_wrel <= 0;
+				log_addr <= { 16'hBAD0, spi_rx_data };
+				log_strobe <= 1;
+				errors[5] <= 1;
+			end
+			SPI_CMD_ERASE: begin
+				// erase sector with 3-byte address (ignored)
+				// but this does clear the latch
+				spi_critical <= 1;
 				spi_status_wrel <= 0;
 				log_addr <= { 16'hBAD0, spi_rx_data };
 				log_strobe <= 1;
@@ -166,13 +208,14 @@ module spi_flash(
 				spi_tx_data <= spi_jid0[23:16];
 				spi_tx_strobe <= 1;
 				spi_rd_cmd <= 1; // pretend this is a read
+				spi_rdid <= 1;
 				log_addr <= { 16'hBAD0, spi_rx_data };
 				log_strobe <= 1;
 				errors[6] <= 1;
 			end
 			default: begin
 				// log the unknown command with a zero address
-				log_addr <= { 16'hBAD0, spi_rx_data };
+				log_addr <= { 16'hC0DE, spi_rx_data };
 				log_len <= spi_rx_data;
 				log_strobe <= 1;
 				spi_critical <= 0;
@@ -230,18 +273,18 @@ module spi_flash(
 		end else
 		if (spi_count == 1)
 		begin
-			// only support 24-bit reads
-			log_addr[23:16] <= spi_rx_data;
+			// only support 24-bit reads right now, but use the
+			// top of memory for optional data
 			ram_addr[23:16] <= spi_rx_data;
 			spi_count <= 2;
 
 			// send the jdid id while everything is happening
 			spi_tx_data <= spi_jid0[15: 8];
-			//spi_tx_strobe <= 1;
+			if (spi_rdid)
+				spi_tx_strobe <= 1;
 		end else
 		if (spi_count == 2)
 		begin
-			log_addr[15:8] <= spi_rx_data;
 			ram_addr[15:8] <= spi_rx_data;
 			spi_count <= 3;
 
@@ -255,13 +298,19 @@ module spi_flash(
 
 			// send the jdid id while everything is happening
 			spi_tx_data <= spi_jid0[ 7: 0];
-			//spi_tx_strobe <= 1;
+			if (spi_rdid)
+				spi_tx_strobe <= 1;
 		end else
 		if (spi_count == 3)
 		begin
 			// fill in the rest of the address for logging
-			log_addr[ 7: 0] <= spi_rx_data;
-			ram_addr[ 7: 0] <= spi_rx_data + 1;
+			log_addr <= { ram_addr[31:8], spi_rx_data };
+			log_len <= spi_rd_dummy ? -1 : 0;
+
+			// the next read will start one byte higher
+			// for a normal read, otherwise on the same byte for
+			// one with a dummy read
+			ram_addr[ 7: 0] <= spi_rx_data + (spi_rd_dummy ? 0 : 1);
 			spi_count <= 4;
 
 			if (read_complete || ram_read_valid) begin
