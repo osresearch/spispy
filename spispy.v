@@ -35,7 +35,13 @@ module top(
 	// buttons for user io
 	input [6:0] btn,
 );
-	parameter MONITOR_MODE = 1;
+	parameter MONITOR_MODE = 0;
+	wire ENABLE_EMULATION = 1;
+	wire ENABLE_TOCTOU = 1; // if there is an existing flash that we're modifying
+	parameter LOG_ALL_BYTES = 0;
+	parameter VERBOSE_LOGGING = 0;
+
+
 
 	// gpio0 must be tied high to prevent board from rebooting
 	assign wifi_gpio0 = 1;
@@ -57,9 +63,6 @@ module top(
 	wire spi_mosi_pin = gp[18];
 	wire spi_miso_pin = gp[17];
 	wire spi_cs_out_pin = gp[16]; // for toctou on a flash without pullup
-
-	wire ENABLE_EMULATION = 1;
-	wire ENABLE_TOCTOU = 0; // if there is an existing flash that we're modifying
 
 	// !CS is driven high if we are in TOCTOU mode since the existing flash
 	// chip needs to be turned off.
@@ -391,9 +394,6 @@ sdram_ctrl0 (
 	reg [1:0] spi_cs_prev;
 	reg spi_cs_falling = spi_cs_prev[1] && !spi_cs_prev[0];
 	always @(posedge clk) spi_cs_prev <= { spi_cs_prev[0], spi_cs_in };
-
-	parameter LOG_ALL_BYTES = 0;
-	parameter VERBOSE_LOGGING = 0;
 
 	reg [15:0] spi_rx_bytes;
 
