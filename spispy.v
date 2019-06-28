@@ -4,10 +4,12 @@
 `default_nettype none
 `include "uart.v"
 `include "pll_132.v"
+`include "pll_48.v"
 `include "sdram_ctrl.v"
 `include "spi_device.v"
 `include "spi_flash.v"
 `include "user.v"
+`include "usb_serial.v"
 
 module top(
 	input clk_25mhz,
@@ -28,6 +30,12 @@ module top(
 	output sdram_rasn,
 	output sdram_casn,
 
+	// USB port directly wired to serial port
+	inout usb_fpga_bd_dn,
+	inout usb_fpga_bd_dp,
+	output usb_fpga_pu_dp,
+	output usb_fpga_pu_dn,
+
 	// GPIO pins, to be assigned
 	inout [27:0] gp,
 	inout [27:0] gn,
@@ -40,8 +48,7 @@ module top(
 	wire ENABLE_TOCTOU = 1; // if there is an existing flash that we're modifying
 	parameter LOG_ALL_BYTES = 0;
 	parameter VERBOSE_LOGGING = 0;
-
-
+`define USB_SERIAL
 
 	// gpio0 must be tied high to prevent board from rebooting
 	assign wifi_gpio0 = 1;
@@ -53,9 +60,12 @@ module top(
 	// with a 180 degree out of phase sdram clk
 	wire clk_132, clk_132_180, locked, reset = !locked || btn[1];
 	pll_132 pll_132_i(clk_25mhz, clk_132, clk_132_180, locked);
-	//pll_96 pll_132_i(clk_25mhz, clk_132, clk_132_180, locked);
 	wire clk = clk_132;
 	wire sdram_clk = clk_132_180; // sdram needs to be stable on the rising edge
+
+	// generate a 48 mhz clock for the USB serial port
+	wire clk_48;
+	pll_48 pll_48_i(clk_132, clk_48);
 
 	// SPI bus is on the J2 positive pins
 	wire spi_cs_pin = gp[20];
@@ -215,14 +225,54 @@ module top(
 	TRELLIS_IO #(.DIR("OUTPUT")) debug2(.B(gp[27]), .I(debug_0));
 	TRELLIS_IO #(.DIR("OUTPUT")) debug3(.B(gp[25]), .I(debug_1));
 
-	// serial port interface for talking to the host system
-	// 132 MHz clock / 48 == 3 megabaud
+	// serial fifo, either usb serial or ftdi serial
 	wire uart_txd_ready;
 	reg [7:0] uart_txd;
 	reg uart_txd_strobe;
 	wire uart_rxd_strobe;
 	wire [7:0] uart_rxd;
 
+`ifdef USB_SERIAL
+	wire usb_tx_en;
+	wire usb_n_in, usb_n_out;
+	wire usb_p_in, usb_p_out;
+	assign usb_fpga_pu_dp = 1; // full speed 1.1 device
+	assign usb_fpga_pu_dn = 0; // full speed 1.1 device
+	assign ftdi_rxd = 1; // idle high
+	
+	TRELLIS_IO #(.DIR("BIDIR")) usb_p_buf(
+		.T(!usb_tx_en),
+		.B(usb_fpga_bd_dp),
+		.I(usb_p_out),
+		.O(usb_p_in),
+	);
+	TRELLIS_IO #(.DIR("BIDIR")) usb_n_buf(
+		.T(!usb_tx_en),
+		.B(usb_fpga_bd_dn),
+		.I(usb_n_out),
+		.O(usb_n_in),
+	);
+	usb_serial usb_serial_i(
+		.clk_48mhz(clk_48),
+		.clk(clk),
+		.reset(reset),
+		// physical
+		.usb_p_tx(usb_p_out),
+		.usb_n_tx(usb_n_out),
+		.usb_p_rx(usb_tx_en ? 1'b1 : usb_p_in),
+		.usb_n_rx(usb_tx_en ? 1'b0 : usb_n_in),
+		.usb_tx_en(usb_tx_en),
+		// logical
+		.uart_tx_ready(uart_txd_ready),
+		.uart_tx_data(uart_txd),
+		.uart_tx_strobe(uart_txd_strobe),
+		.uart_rx_data(uart_rxd),
+		.uart_rx_strobe(uart_rxd_strobe),
+		// .host_presence (not used)
+	);
+`else
+	// ftdi serial port interface for talking to the host system
+	// 132 MHz clock / 48 == 3 megabaud
 	uart #(
 		.DIVISOR(132 / 3), // 132 MHz
 		//.DIVISOR(96 / 3),
@@ -241,6 +291,7 @@ module top(
 		.rxd(uart_rxd),
 		.rxd_strobe(uart_rxd_strobe),
 	);
+`endif
 
 	// sdram logical interface has a 16-bit data interface
 	parameter ADDR_WIDTH = 24;

@@ -8,10 +8,10 @@ PRJTRELLIS ?= ../prjtrellis/libtrellis/
 
 %.json: %.v
 	yosys \
+		-p "read_verilog -Iusb $<" \
 		-p "synth_ecp5 -json $@" \
 		-E .$(basename $@).d \
 		-q \
-		$<
 
 %.config: %.json
 	nextpnr-ecp5 \

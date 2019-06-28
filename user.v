@@ -196,7 +196,7 @@ module user_command_parser(
 			if (!rd_pending
 			&& uart_txd_ready
 			&& !uart_txd_strobe
-			&& counter == 0
+			//&& counter == 0
 			&& sd_idle
 			&& !sd_enable)
 			begin
@@ -225,7 +225,9 @@ module user_command_parser(
 		if (mode == MODE_VERSION) begin
 			if (msg_len == 0)
 				mode <= MODE_WAIT;
-			if (uart_txd_ready) begin
+			if (uart_txd_ready
+			&& !uart_txd_strobe)
+			begin
 				msg_len <= msg_len - 1;
 				uart_txd <= "1";
 				uart_txd_strobe <= 1;
