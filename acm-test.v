@@ -106,6 +106,8 @@ module top(
 		.rxd_strobe(uart_rxd_strobe),
 	);
 
+/*
+	// echo from ftdi to usb, sending a large number of bytes on usb
 	reg [7:0] count;
 	reg [7:0] byte;
 
@@ -121,14 +123,93 @@ module top(
 		begin
 			led <= uart_rxd;
 			byte <= uart_rxd;
-			count <= 1;
+			count <= 255;
 		end else
 		if (count != 0
+		&& !usb_txd_strobe // must return strobe to zero
 		&& usb_txd_ready)
 		begin
 			usb_txd_strobe <= 1;
 			usb_txd <= byte;
+			byte <= byte + 1;
 			count <= count - 1;
 		end
 	end
+*/
+	// echo from usb to ftdi, reading through a fifo
+	wire [7:0] fifo_rxd;
+	wire fifo_rxd_available;
+	reg fifo_rxd_strobe;
+	reg [7:0] fifo_write_data;
+	reg fifo_write_strobe;
+
+/*
+	always @(posedge clk)
+	begin
+		if (usb_rxd_strobe) begin
+			fifo_write_data <= usb_rxd;
+			fifo_write_strobe <= 1;
+		end else begin
+			fifo_write_strobe <= 0;
+		end
+	end
+*/
+
+	fifo #(.NUM(512)) rx_fifo(
+		.clk(clk),
+		.reset(reset),
+		.write_data(usb_rxd),
+		.write_strobe(usb_rxd_strobe),
+		.data_available(fifo_rxd_available),
+		.read_data(fifo_rxd),
+		.read_strobe(fifo_rxd_strobe),
+	);
+
+	reg [7:0] count;
+	reg [7:0] byte;
+
+	always @(posedge clk)
+	begin
+		uart_txd_strobe <= 0;
+		fifo_rxd_strobe <= 0;
+
+		if (reset) begin
+			// nothing to do
+			count <= 0;
+		end else
+		if (fifo_rxd_available) // && uart_txd_ready)
+		begin
+			led <= fifo_rxd;
+			uart_txd <= fifo_rxd;
+			uart_txd_strobe <= 1;
+			fifo_rxd_strobe <= 1;
+		end
+/*
+		if (usb_rxd_strobe) begin
+			uart_txd_strobe <= 1;
+			uart_txd <= usb_rxd;
+			count <= count + 1;
+		end
+*/
+	end
+
+/*
+	// track time between bytes on ACM
+	reg [7:0] count;
+	always @(posedge clk)
+	begin
+		uart_txd_strobe <= 0;
+
+		if (count != 8'hFF)
+			count <= count + 1;
+
+		if (usb_rxd_strobe)
+		begin
+			uart_txd <= count;
+			count <= 0;
+			if (uart_txd_ready)
+				uart_txd_strobe <= 1;
+		end
+	end
+*/
 endmodule
