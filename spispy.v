@@ -238,7 +238,7 @@ module top(
 	wire usb_p_in, usb_p_out;
 	assign usb_fpga_pu_dp = 1; // full speed 1.1 device
 	assign usb_fpga_pu_dn = 0; // full speed 1.1 device
-	assign ftdi_rxd = 1; // idle high
+	//assign ftdi_rxd = 1; // idle high
 	
 	TRELLIS_IO #(.DIR("BIDIR")) usb_p_buf(
 		.T(!usb_tx_en),
@@ -252,6 +252,28 @@ module top(
 		.I(usb_n_out),
 		.O(usb_n_in),
 	);
+
+	reg [7:0] usb_txd;
+	reg usb_txd_strobe;
+	wire usb_txd_ready;
+
+	wire [7:0] fifo_rxd;
+	wire fifo_data_available;
+	reg fifo_rx_strobe;
+
+	fifo tx_buffer(
+		.clk(clk),
+		.reset(reset),
+		// input
+		.space_available(uart_txd_ready),
+		.write_data(uart_txd),
+		.write_strobe(uart_txd_strobe),
+		// output
+		.data_available(fifo_data_available),
+		.read_data(fifo_rxd),
+		.read_strobe(fifo_rx_strobe),
+	);
+	
 	usb_serial usb_serial_i(
 		.clk_48mhz(clk_48),
 		.clk(clk),
@@ -263,14 +285,30 @@ module top(
 		.usb_n_rx(usb_tx_en ? 1'b0 : usb_n_in),
 		.usb_tx_en(usb_tx_en),
 		// logical
-		.uart_tx_ready(uart_txd_ready),
-		.uart_tx_data(uart_txd),
-		.uart_tx_strobe(uart_txd_strobe),
+		.uart_tx_ready(usb_txd_ready),
+		.uart_tx_data(fifo_rxd),
+		.uart_tx_strobe(usb_txd_strobe),
 		.uart_rx_data(uart_rxd),
 		.uart_rx_strobe(uart_rxd_strobe),
 		// .host_presence (not used)
 	);
+
+	always @(posedge clk)
+	begin
+		usb_txd_strobe <= 0;
+		fifo_rx_strobe <= 0;
+
+		if (reset) begin
+			// nothing
+		end else
+		if (usb_txd_ready && fifo_data_available)
+		begin
+			usb_txd_strobe <= 1;
+			fifo_rx_strobe <= 1;
+		end
+	end
 `else
+`endif
 	// ftdi serial port interface for talking to the host system
 	// 132 MHz clock / 48 == 3 megabaud
 	uart #(
@@ -286,12 +324,11 @@ module top(
 		.serial_rxd(ftdi_txd), // fpga <-- ftdi
 		// logical
 		.txd(uart_txd),
-		.txd_ready(uart_txd_ready),
+		//.txd_ready(uart_txd_ready),
 		.txd_strobe(uart_txd_strobe),
-		.rxd(uart_rxd),
-		.rxd_strobe(uart_rxd_strobe),
+		//.rxd(uart_rxd),
+		//.rxd_strobe(uart_rxd_strobe),
 	);
-`endif
 
 	// sdram logical interface has a 16-bit data interface
 	parameter ADDR_WIDTH = 24;
