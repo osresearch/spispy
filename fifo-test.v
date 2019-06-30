@@ -28,7 +28,7 @@ module top();
 	wire [7:0] read_ptr;
 	wire [7:0] fifo_count;
 
-	fifo #(.NUM(256)) fifo_i(
+	fifo #(.NUM(4)) fifo_i(
 		.clk(clk),
 		.reset(reset),
 		.space_available(space_available),
@@ -46,7 +46,7 @@ module top();
 	always @(posedge clk)
 	begin
 
-		#100
+		#10000
 		$finish;
 	end
 
@@ -62,9 +62,15 @@ module top();
 			counter <= counter + 1;
 			if (counter[3:0] < counter[7:4])
 			begin
-				$display("%d: writing %02x", counter, write_data+1);
-				write_strobe <= 1;
-				write_data <= write_data + 1;
+				if (space_available)
+				begin
+					$display("%02x: writing %02x", counter, write_data+1);
+					write_strobe <= 1;
+					write_data <= write_data + 1;
+				end else begin
+					$display("STALL");
+					counter <= counter;
+				end
 			end
 		end
 	end
