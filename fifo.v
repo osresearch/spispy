@@ -33,12 +33,16 @@ module fifo(
 	reg [BITS:0] count;
 	reg [BITS-1:0] rd_ptr;
 	reg [BITS-1:0] wr_ptr;
-	reg [WIDTH-1:0] read_data;
+	reg [WIDTH-1:0] read_data_ram;
+	reg [WIDTH-1:0] read_data_fwft;
 	reg [WIDTH-1:0] ram[0:NUM-1];
 
 	assign more_available = (count > 1);
 	assign data_available = (count != 0);
 	assign space_available = (NUM - count > FREESPACE);
+
+	reg fwft;
+	assign read_data = fwft ? read_data_fwft : read_data_ram;
 
 	always @(posedge clk) begin
 		if (reset) begin
@@ -49,12 +53,16 @@ module fifo(
 			if (write_strobe)
 				ram[wr_ptr] <= write_data;
 
+			read_data_ram <= ram[rd_ptr + read_strobe];
+			fwft <= 0;
+
 			// first word fall through
 			if ((write_strobe && count == 0)
 			||  (write_strobe && read_strobe && count == 1))
-				read_data <= write_data;
-			else
-				read_data <= ram[rd_ptr + read_strobe];
+			begin
+				read_data_fwft <= write_data;
+				fwft <= 1;
+			end
 
 			rd_ptr <= rd_ptr + read_strobe;
 			wr_ptr <= wr_ptr + write_strobe;
