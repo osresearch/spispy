@@ -60,10 +60,14 @@ module user_command_parser(
 		CMD_VERSION	= "V",
 		CMD_INVALID	= 8'hff;
 
+	// when we're processing input we are not able to handle
+	// any incoming messages on the fifo.
+	reg processing;
+
 	// when connected to the USB serial port bytes arrive in
 	// batches so it is necessary to store them in a fifo until
 	// we're ready to process them.
-	reg fifo_rxd_strobe;
+	wire fifo_rxd_strobe = fifo_rxd_available && !processing;
 	wire [7:0] fifo_rxd;
 	wire fifo_rxd_available;
 
@@ -77,11 +81,9 @@ module user_command_parser(
 		.read_strobe(fifo_rxd_strobe),
 	);
 
-	reg processing;
 
 	always @(posedge clk)
 	begin
-		fifo_rxd_strobe <= 0;
 		uart_txd_strobe <= 0;
 		counter <= counter + 1;
 
@@ -90,11 +92,11 @@ module user_command_parser(
 			msg_len <= 0;
 			wr_pending <= 0;
 			rd_pending <= 0;
+			processing <= 0;
 		end else
 		if (fifo_rxd_available && !processing)
 		case(mode)
 		MODE_WAIT: begin
-			fifo_rxd_strobe <= 1;
 			sd_we <= 0;
 			rd_pending <= 0;
 			wr_pending <= 0;
@@ -112,45 +114,37 @@ module user_command_parser(
 		MODE_L2: begin
 			msg_len[23:16] <= fifo_rxd;
 			mode <= MODE_L1;
-			fifo_rxd_strobe <= 1;
 		end
 		MODE_L1: begin
 			msg_len[15: 8] <= fifo_rxd;
 			mode <= MODE_L0;
-			fifo_rxd_strobe <= 1;
 		end
 		MODE_L0: begin
 			msg_len[ 7: 0] <= fifo_rxd;
 			mode <= MODE_A3;
-			fifo_rxd_strobe <= 1;
 		end
 
 		// build the address
 		MODE_A3: begin
 			sd_addr[31:24] <= fifo_rxd;
 			mode <= MODE_A2;
-			fifo_rxd_strobe <= 1;
 		end
 		MODE_A2: begin
 			sd_addr[23:16] <= fifo_rxd;
 			mode <= MODE_A1;
-			fifo_rxd_strobe <= 1;
 		end
 		MODE_A1: begin
 			sd_addr[15: 8] <= fifo_rxd;
 			mode <= MODE_A0;
-			fifo_rxd_strobe <= 1;
 		end
 		MODE_A0: begin
 			sd_addr[ 7: 0] <= fifo_rxd;
 			mode <= cmd_mode;
-			fifo_rxd_strobe <= 1;
 		end
 
 		MODE_CMD: begin
 			//uart_txd <= fifo_rxd;
 			//uart_txd_strobe <= 1;
-			fifo_rxd_strobe <= 1;
 			case(fifo_rxd)
 			CMD_RD: begin
 				cmd_mode <= MODE_RD;
@@ -197,12 +191,10 @@ module user_command_parser(
 				sd_we <= 1;
 				sd_enable <= 1;
 				wr_pending <= 1;
-				fifo_rxd_strobe <= 1;
 			end
 		end
 
 		default: begin
-			fifo_rxd_strobe <= 1;
 			uart_txd <= "@";
 			uart_txd_strobe <= 1;
 			msg_len <= 0;
