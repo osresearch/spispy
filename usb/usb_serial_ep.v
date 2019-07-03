@@ -1,3 +1,5 @@
+`include "fifo.v"
+
 module usb_serial_ep (
   input clk,
   input reset,
@@ -19,11 +21,11 @@ module usb_serial_ep (
   ////////////////////
   // in endpoint interface 
   ////////////////////
-  output reg in_ep_req = 0,
+  output in_ep_req,
   input in_ep_grant,
   input in_ep_data_free,
   output reg in_ep_data_put = 0,
-  output [7:0] in_ep_data,
+  output reg [7:0] in_ep_data,
   output reg in_ep_data_done = 0,
   output in_ep_stall,
   input in_ep_acked,
@@ -59,6 +61,7 @@ module usb_serial_ep (
 
   reg out_data_valid;
   reg uart_rx_ready;
+  reg uart_rx_strobe;
   reg [7:0] uart_rx_data;
 
   always @(posedge clk) begin
@@ -70,7 +73,7 @@ module usb_serial_ep (
 		uart_rx_strobe <= 1;
 	end
   end
-  
+
   // "In" from the FPGA to the Host.
   // when the host says that there is space free in the outbound
   // packet, clock in bytes from the FPGA on the uart_tx_strobe line.
@@ -79,25 +82,45 @@ module usb_serial_ep (
   // is high and the "in" data is free.
   wire byte_in_xfr_ready = in_ep_grant && in_ep_data_free;
 
-  reg [7:0] tx_data;
-  reg tx_data_valid;
-  assign uart_tx_ready = !tx_data_valid;
+  wire [7:0] fifo_read_data;
+  wire fifo_data_available;
+  wire fifo_more_available;
+
+  // if we're allowed to send a byte and there is data in the fifo, drain it
+  wire fifo_read_strobe = fifo_data_available && byte_in_xfr_ready && bytes_remaining != 0;
+
+  // request to send if there is data available in the fifo
+  assign in_ep_req = fifo_data_available;
+
+  fifo #(.NUM(512), .FREESPACE(16)) fifo_i(
+	.clk(clk),
+	.reset(reset),
+	// read from the rest of the FPGA
+	.space_available(uart_tx_ready),
+	.write_data(uart_tx_data),
+	.write_strobe(uart_tx_strobe),
+	// send to the USB host
+	.data_available(fifo_data_available),
+	.more_available(fifo_more_available),
+	.read_data(fifo_read_data),
+	.read_strobe(fifo_read_strobe),
+  );
+  
+  localparam MAX_BYTES = 32;
+  reg [7:0] bytes_remaining;
 
   always @(posedge clk) begin
 	in_ep_data_put <= 0;
-	in_ep_req <= 0;
 	in_ep_data_done <= 0;
-	if (uart_tx_strobe) begin
-		tx_data <= uart_tx_data;
-		tx_data_valid <= 1;
-	end
-	if (in_ep_data_free && tx_data_valid) begin
-		in_ep_req <= 1;
+
+	if (fifo_read_strobe) begin
 		in_ep_data_put <= 1;
-		in_ep_data_done <= 1;
-		in_ep_data <= tx_data;
-		tx_data_valid <= 0;
-	end
+		in_ep_data_done <= bytes_remaining == 1 || !fifo_more_available;
+		//in_ep_data_done <= 1; // only send a byte at a time
+		in_ep_data <= fifo_read_data;
+		bytes_remaining <= bytes_remaining - 1;
+	end else
+		bytes_remaining <= MAX_BYTES-1;
   end
 
 /*
