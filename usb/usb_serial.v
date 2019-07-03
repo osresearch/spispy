@@ -68,64 +68,6 @@ module usb_serial (
   wire sof_valid;
   wire [10:0] frame_index;
 
-`undef SERIAL
-`ifdef SERIAL
-  // signal if we have data available
-  // note that the "in" and "out" are from the HOST perspective,
-  // while "rx" and "tx" are from the FPGA perspective
-
-  // the grant and data available go high one clock cycle before
-  // the data is actually available.  this works for receiving data
-  wire rx_ready = serial_out_ep_grant && serial_out_ep_data_avail;
-  delay #(.DELAY(1)) rx_ready_delay(clk, rx_ready, uart_rx_ready);
-
-  assign serial_out_ep_req = serial_out_ep_data_avail;
-  assign serial_out_ep_data_get = serial_out_ep_grant && uart_rx_strobe;
-  assign uart_rx_data = out_ep_data;
-  assign serial_out_ep_stall = 0;
-
-  // buffer up to 512 bytes of outgoing data (one BRAM)
-  reg [7:0] tx_fifo[511:0];
-  reg [8:0] tx_read_ptr;
-  reg [8:0] tx_write_ptr;
-  wire tx_data_available = tx_write_ptr != tx_read_ptr;
-  assign uart_tx_ready = (tx_write_ptr+1) != tx_read_ptr;
-  assign serial_in_ep_stall = 0;
-
-  delay #(.DELAY(0)) in_req_delay(clk, tx_data_available, serial_in_ep_req);
-
-  wire data_done = !serial_in_ep_data_free || !tx_data_available;
-  //delay #(.DELAY(2)) data_done_delay(clk, data_done, serial_in_ep_data_done);
-  assign serial_in_ep_data_done = data_done;
-  wire in_ready_i = serial_in_ep_data_free && serial_in_ep_grant;
-  reg in_ready;
-  delay #(.DELAY(0)) in_ready_delay(clk, in_ready_i, in_ready);
-
-  reg data_put;
-  //reg serial_in_ep_data_put;
-  delay #(.DELAY(0)) data_put_delay(clk, data_put, serial_in_ep_data_put);
-  //assign serial_in_ep_data_put = data_put;
-
-  always @(posedge clk) if (!reset)
-  begin
-	data_put <= 0;
-
-	if (uart_tx_strobe && uart_tx_ready)
-	begin
-		tx_fifo[tx_write_ptr] <= uart_tx_data;
-		tx_write_ptr <= tx_write_ptr + 1;
-	end
-
-	if (tx_data_available)
-	begin
-		data_put <= 1;
-		serial_in_ep_data <= tx_fifo[tx_read_ptr];
-		if (in_ready)
-			tx_read_ptr <= tx_read_ptr + 1;
-	end
-  end
-`else
-
   usb_serial_ep usb_serial_ep_inst (
     .clk(clk),
     .reset(reset),
@@ -157,7 +99,6 @@ module usb_serial (
     .uart_rx_data(uart_rx_data),
     .uart_rx_strobe(uart_rx_strobe)
   );
-`endif
 
   usb_serial_ctrl_ep ctrl_ep_inst (
     .clk(clk),
