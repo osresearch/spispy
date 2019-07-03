@@ -253,27 +253,8 @@ module top(
 		.O(usb_n_in),
 	);
 
-	reg [7:0] usb_txd;
-	reg usb_txd_strobe;
-	wire usb_txd_ready;
-
-	wire [7:0] fifo_rxd;
-	wire fifo_data_available;
-	reg fifo_rx_strobe;
-
-	fifo tx_buffer(
-		.clk(clk),
-		.reset(reset),
-		// input
-		.space_available(uart_txd_ready),
-		.write_data(uart_txd),
-		.write_strobe(uart_txd_strobe),
-		// output
-		.data_available(fifo_data_available),
-		.read_data(fifo_rxd),
-		.read_strobe(fifo_rx_strobe),
-	);
-	
+	reg [7:0] uart_txd_fake;
+	always @(posedge clk) if (uart_txd_strobe) uart_txd_fake <= uart_txd_fake + 1;
 	usb_serial usb_serial_i(
 		.clk_48mhz(clk_48),
 		.clk(clk),
@@ -285,30 +266,17 @@ module top(
 		.usb_n_rx(usb_tx_en ? 1'b0 : usb_n_in),
 		.usb_tx_en(usb_tx_en),
 		// logical
-		.uart_tx_ready(usb_txd_ready),
-		.uart_tx_data(fifo_rxd),
-		.uart_tx_strobe(usb_txd_strobe),
+		.uart_tx_ready(uart_txd_ready),
+		.uart_tx_data(uart_txd),
+		//.uart_tx_data(uart_txd_fake),
+		.uart_tx_strobe(uart_txd_strobe),
 		.uart_rx_data(uart_rxd),
 		.uart_rx_strobe(uart_rxd_strobe),
 		// .host_presence (not used)
 	);
 
-	always @(posedge clk)
-	begin
-		usb_txd_strobe <= 0;
-		fifo_rx_strobe <= 0;
-
-		if (reset) begin
-			// nothing
-		end else
-		if (usb_txd_ready && fifo_data_available)
-		begin
-			usb_txd_strobe <= 1;
-			fifo_rx_strobe <= 1;
-		end
-	end
-`else
 `endif
+
 	// ftdi serial port interface for talking to the host system
 	// 132 MHz clock / 48 == 3 megabaud
 	uart #(
@@ -563,8 +531,10 @@ sdram_ctrl0 (
 			uart_txd_strobe <= 1;
 			uart_txd <= spi_log_len; // spi_tx_data;
 		end else
-		if (user_txd_strobe && uart_txd_ready)
+		if (user_txd_strobe) // && uart_txd_ready)
 		begin
+			// if they have asserted strobe without ready,
+			// it is their own fault.
 			uart_txd_strobe <= 1;
 			uart_txd <= user_txd;
 		end else begin
