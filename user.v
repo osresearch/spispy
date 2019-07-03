@@ -4,6 +4,7 @@
  * Parse user commands on the serial port, generate SDRAM commands.
  *
  */
+`include "fifo.v"
 
 module user_command_parser(
 	input clk,
@@ -59,6 +60,28 @@ module user_command_parser(
 		CMD_VERSION	= "V",
 		CMD_INVALID	= 8'hff;
 
+	// when we're processing input we are not able to handle
+	// any incoming messages on the fifo.
+	reg processing;
+
+	// when connected to the USB serial port bytes arrive in
+	// batches so it is necessary to store them in a fifo until
+	// we're ready to process them.
+	wire fifo_rxd_strobe = fifo_rxd_available && !processing;
+	wire [7:0] fifo_rxd;
+	wire fifo_rxd_available;
+
+	fifo #(.NUM(512)) rx_fifo(
+		.clk(clk),
+		.reset(reset),
+		.write_data(uart_rxd),
+		.write_strobe(uart_rxd_strobe),
+		.data_available(fifo_rxd_available),
+		.read_data(fifo_rxd),
+		.read_strobe(fifo_rxd_strobe),
+	);
+
+
 	always @(posedge clk)
 	begin
 		uart_txd_strobe <= 0;
@@ -69,8 +92,9 @@ module user_command_parser(
 			msg_len <= 0;
 			wr_pending <= 0;
 			rd_pending <= 0;
+			processing <= 0;
 		end else
-		if (uart_rxd_strobe)
+		if (fifo_rxd_available && !processing)
 		case(mode)
 		MODE_WAIT: begin
 			sd_we <= 0;
@@ -79,48 +103,49 @@ module user_command_parser(
 			msg_len <= 0;
 			sd_addr <= 0;
 
-			if (uart_rxd == CMD_HDR) begin
+			if (fifo_rxd == CMD_HDR) begin
 				mode <= MODE_CMD;
 			end else begin
 				uart_txd <= "!";
+				uart_txd <= fifo_rxd;
 				uart_txd_strobe <= 1;
 			end
 		end
 		MODE_L2: begin
-			msg_len[23:16] <= uart_rxd;
+			msg_len[23:16] <= fifo_rxd;
 			mode <= MODE_L1;
 		end
 		MODE_L1: begin
-			msg_len[15: 8] <= uart_rxd;
+			msg_len[15: 8] <= fifo_rxd;
 			mode <= MODE_L0;
 		end
 		MODE_L0: begin
-			msg_len[ 7: 0] <= uart_rxd;
+			msg_len[ 7: 0] <= fifo_rxd;
 			mode <= MODE_A3;
 		end
 
 		// build the address
 		MODE_A3: begin
-			sd_addr[31:24] <= uart_rxd;
+			sd_addr[31:24] <= fifo_rxd;
 			mode <= MODE_A2;
 		end
 		MODE_A2: begin
-			sd_addr[23:16] <= uart_rxd;
+			sd_addr[23:16] <= fifo_rxd;
 			mode <= MODE_A1;
 		end
 		MODE_A1: begin
-			sd_addr[15: 8] <= uart_rxd;
+			sd_addr[15: 8] <= fifo_rxd;
 			mode <= MODE_A0;
 		end
 		MODE_A0: begin
-			sd_addr[ 7: 0] <= uart_rxd;
+			sd_addr[ 7: 0] <= fifo_rxd;
 			mode <= cmd_mode;
 		end
 
 		MODE_CMD: begin
-			//uart_txd <= uart_rxd;
+			//uart_txd <= fifo_rxd;
 			//uart_txd_strobe <= 1;
-			case(uart_rxd)
+			case(fifo_rxd)
 			CMD_RD: begin
 				cmd_mode <= MODE_RD;
 				mode <= MODE_L2;
@@ -139,31 +164,34 @@ module user_command_parser(
 		end
 
 		MODE_RD: begin
-			// they are sending too fast. what should we do?
+			// we're processing stuff, don't responsd
+			processing <= 1;
 		end
 
 		MODE_VERSION: begin
-			// they are sending too fast. what should we do?
+			// we're processing stuff, don't responsd
+			processing <= 1;
 		end
 
 		MODE_WR: begin
-			// should check that we don't have a pending write
-			if (wr_pending) begin
-				uart_txd_strobe <= 1;
-				uart_txd <= "%";
-			end
+			processing <= 1;
 
-			// select which byte we're writing
-			if (sd_addr[0]) begin
-				sd_wr_data <= { uart_rxd, 8'h00 };
-				sd_wr_mask <= 2'b10;
+			if (wr_pending) begin
+				// if we still have a pending write, do nothing
 			end else begin
-				sd_wr_data <= { 8'h00, uart_rxd };
-				sd_wr_mask <= 2'b01;
+				// consume the byte and start a new write
+				// select which byte we're writing
+				if (sd_addr[0]) begin
+					sd_wr_data <= { fifo_rxd, 8'h00 };
+					sd_wr_mask <= 2'b10;
+				end else begin
+					sd_wr_data <= { 8'h00, fifo_rxd };
+					sd_wr_mask <= 2'b01;
+				end
+				sd_we <= 1;
+				sd_enable <= 1;
+				wr_pending <= 1;
 			end
-			sd_we <= 1;
-			sd_enable <= 1;
-			wr_pending <= 1;
 		end
 
 		default: begin
@@ -171,9 +199,10 @@ module user_command_parser(
 			uart_txd_strobe <= 1;
 			msg_len <= 0;
 			mode <= MODE_WAIT;
+			processing <= 0;
 		end
 		endcase
-		else
+		else // these are all no bytes are available
 		if (mode == MODE_INVALID) begin
 			mode <= MODE_WAIT;
 			uart_txd <= "?";
@@ -182,11 +211,13 @@ module user_command_parser(
 		if (mode == MODE_RD) begin
 			if (msg_len == 0) begin
 				mode <= MODE_WAIT;
+				processing <= 0;
 			end else
 			if (sd_ack && rd_pending) begin
 				// new byte is available to send
+				// we waited until txd_ready was set so that
+				// we know that we can send this byte to the serial port
 				sd_enable <= 0;
-				uart_txd <= sd_addr[7:0] + "A"; // sd_rd_data;
 				uart_txd <= sd_addr[0] ? sd_rd_data[15:8] : sd_rd_data[7:0];
 				uart_txd_strobe <= 1;
 				msg_len <= msg_len - 1;
@@ -195,8 +226,8 @@ module user_command_parser(
 			end else
 			if (!rd_pending
 			&& uart_txd_ready
-			&& !uart_txd_strobe
-			&& counter == 0
+			//&& !uart_txd_strobe
+			//&& counter == 0
 			&& sd_idle
 			&& !sd_enable)
 			begin
@@ -212,6 +243,7 @@ module user_command_parser(
 				mode <= MODE_WAIT;
 				uart_txd <= "w";
 				uart_txd_strobe <= 1;
+				processing <= 0;
 			end else
 			if (wr_pending && sd_ack) begin
 				// write done, prepare for next byte
@@ -220,12 +252,17 @@ module user_command_parser(
 				wr_pending <= 0;
 				sd_addr <= sd_addr + 1;
 				msg_len <= msg_len - 1;
+				processing <= 0;
 			end
 		end else
 		if (mode == MODE_VERSION) begin
-			if (msg_len == 0)
+			if (msg_len == 0) begin
 				mode <= MODE_WAIT;
-			if (uart_txd_ready) begin
+				processing <= 0;
+			end else
+			if (uart_txd_ready)
+			//&& !uart_txd_strobe)
+			begin
 				msg_len <= msg_len - 1;
 				uart_txd <= "1";
 				uart_txd_strobe <= 1;

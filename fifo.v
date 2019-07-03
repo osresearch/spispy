@@ -4,74 +4,74 @@
 `include "util.v"
 
 /*
- * Same clock domain FIFO.
+ * Same clock domain FIFO with first-word-fallthrough.
  *
  * Holds up to NUM entries, which should be a power of two.
  * Can accept a new item every clock cycle,
  * Can export an item every clock cycle.
- * Items will live at least one clock cycle in the ring
- * and become visible the next clock cycle.
+ *
  */
 
 module fifo(
 	input clk,
 	input reset,
-	output data_available,
+	// write side
 	output space_available,
 	input [WIDTH-1:0] write_data,
 	input write_strobe,
+	// read side
+	output data_available,
+	output more_available,
 	output [WIDTH-1:0] read_data,
-	input read_strobe,
-
-	// debugging ports
-	output reg werror,
-	output reg rerror,
-	output [BITS-1:0] write_ptr,
-	output [BITS-1:0] read_ptr
+	input read_strobe
 );
 	parameter WIDTH = 8;
 	parameter NUM = 256;
 	parameter BITS = `CLOG2(NUM);
 	parameter [BITS-1:0] FREESPACE = 1;
 
-	reg [WIDTH-1:0] buffer[0:NUM-1];
-	reg [BITS-1:0] write_ptr;
-	reg [BITS-1:0] read_ptr;
+	reg [BITS:0] count;
+	reg [BITS-1:0] rd_ptr;
+	reg [BITS-1:0] wr_ptr;
+	reg [WIDTH-1:0] read_data_ram;
+	reg [WIDTH-1:0] read_data_fwft;
+	reg [WIDTH-1:0] ram[0:NUM-1];
 
-	reg [WIDTH-1:0] read_data;
+	wire [BITS:0] next_count = count + write_strobe - read_strobe;
+	assign more_available = (count > 1);
+	assign data_available = (count != 0);
+	//assign space_available = {{BITS}{NUM - 1'b1 - next_count}} > FREESPACE;
+	reg space_available;
 
-	assign data_available = read_ptr != write_ptr;
-	wire [BITS-1:0] remaining = read_ptr > write_ptr
-			? read_ptr - write_ptr
-			: (NUM-1'b1) - (write_ptr - read_ptr);
-	assign space_available = remaining > FREESPACE;
-	//wire space_available = !data_available;
+	reg fwft;
+	assign read_data = fwft ? read_data_fwft : read_data_ram;
 
 	always @(posedge clk) begin
 		if (reset) begin
-			write_ptr <= 0;
-			read_ptr <= 0;
-			werror <= 0;
-			rerror <= 0;
+			rd_ptr <= 0;
+			wr_ptr <= 0;
+			count <= 0;
+			space_available <= 0;
 		end else begin
-			if (write_strobe) begin
-				//if (!space_available)
-				begin
-					//werror <= 1;
-				//end else begin
-					buffer[write_ptr] <= write_data;
-					write_ptr <= write_ptr + 1;
-				end
+			if (write_strobe)
+				ram[wr_ptr] <= write_data;
+
+			read_data_ram <= ram[rd_ptr + read_strobe];
+			fwft <= 0;
+
+			// first word fall through
+			if ((write_strobe && count == 0)
+			||  (write_strobe && read_strobe && count == 1))
+			begin
+				read_data_fwft <= write_data;
+				fwft <= 1;
 			end
 
-			if (read_strobe) begin
-				if (!data_available)
-					rerror <= 1;
-				else
-					read_ptr <= read_ptr + 1;
-			end
+			rd_ptr <= rd_ptr + read_strobe;
+			wr_ptr <= wr_ptr + write_strobe;
+			count <= next_count;
 
-			read_data <= buffer[read_ptr];
+			space_available <= (NUM - 1'b1 - next_count > FREESPACE);
 		end
 	end
 endmodule
