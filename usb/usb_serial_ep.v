@@ -21,7 +21,7 @@ module usb_serial_ep (
   ////////////////////
   // in endpoint interface 
   ////////////////////
-  output in_ep_req,
+  output reg in_ep_req,
   input in_ep_grant,
   input in_ep_data_free,
   output reg in_ep_data_put = 0,
@@ -87,10 +87,7 @@ module usb_serial_ep (
   wire fifo_more_available;
 
   // if we're allowed to send a byte and there is data in the fifo, drain it
-  wire fifo_read_strobe = fifo_data_available && byte_in_xfr_ready && bytes_remaining != 0;
-
-  // request to send if there is data available in the fifo
-  assign in_ep_req = fifo_data_available;
+  wire fifo_read_strobe = fifo_data_available && byte_in_xfr_ready && (bytes_remaining != 0);
 
   fifo #(.NUM(512), .FREESPACE(16)) fifo_i(
 	.clk(clk),
@@ -109,18 +106,24 @@ module usb_serial_ep (
   localparam MAX_BYTES = 32;
   reg [7:0] bytes_remaining;
 
+  reg [7:0] counter;
+
   always @(posedge clk) begin
 	in_ep_data_put <= 0;
 	in_ep_data_done <= 0;
+
+	// request to send if there is data available in the fifo
+	in_ep_req <= fifo_data_available;
 
 	if (fifo_read_strobe) begin
 		in_ep_data_put <= 1;
 		in_ep_data_done <= bytes_remaining == 1 || !fifo_more_available;
 		//in_ep_data_done <= 1; // only send a byte at a time
 		in_ep_data <= fifo_read_data;
+		//in_ep_data <= "0" + { fifo_data_available,  fifo_more_available };
 		bytes_remaining <= bytes_remaining - 1;
 	end else
-		bytes_remaining <= MAX_BYTES-1;
+		bytes_remaining <= MAX_BYTES;
   end
 
 /*
