@@ -20,7 +20,9 @@ module top();
 		forever #5 clk = ~clk;
 	end
 
-	wire space_available, data_available;
+	wire space_available;
+	wire data_available;
+	wire more_available;
 	wire [7:0] read_data;
 	reg [7:0] write_data;
 	wire read_strobe;
@@ -33,6 +35,7 @@ module top();
 		.write_data(write_data),
 		.write_strobe(write_strobe),
 		.data_available(data_available),
+		.more_available(more_available),
 		.read_data(read_data),
 		.read_strobe(read_strobe)
 	);
@@ -70,7 +73,7 @@ module top();
 	end
 
 	reg [7:0] expected;
-	reg [3:0] spin;
+	reg [1:0] spin;
 
 	assign read_strobe = data_available && spin == 0;
 
@@ -100,11 +103,11 @@ module top();
 	always
 	begin
 		#5
-		$display("%b write(%b,%02x) read(%b,%02x) avail=%b space=%b",
+		$display("%b write(%b,%02x) read(%b,%02x) avail=%b more=%b space=%b",
 			clk,
 			write_strobe, write_data,
 			read_strobe, read_data,
-			data_available, space_available
+			data_available, more_available, space_available
 		);
 	end
 endmodule
