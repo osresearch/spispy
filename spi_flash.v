@@ -15,6 +15,7 @@ module spi_flash(
 	input	reset,
 
 	// spi bus interface
+	output spi_output_enable,
 	input	spi_cs,
 	input [7:0] spi_rx_data,
 	input	spi_rx_cmd, // when a new transacation is starting
@@ -28,11 +29,12 @@ module spi_flash(
 	output	spi_critical, // asserted when we need to lock the memory bus
 	output	ram_refresh_inhibit, // asserted when we really need the RAM
 	output [31:0] ram_addr,
-	output ram_read_enable,
+	output ram_enable,
 	output ram_write_enable,
+	output reg [1:0] ram_write_mask,
 	input [15:0] ram_read_data,
 	output [15:0] ram_write_data,
-	input ram_read_valid, // when the data is valid
+	input ram_data_valid, // when the data is valid
 
 	// logging interface. valid until the next command starts
 	output reg [31:0] log_addr,
@@ -47,7 +49,9 @@ module spi_flash(
 	reg spi_tx_data;
 
 	reg [31:0] ram_addr;
-	reg ram_read_enable;
+	reg [15:0] ram_write_data;
+	reg ram_enable;
+	reg ram_write_enable;
 	reg read_complete;
 	reg read_immediate_update;
 
@@ -58,6 +62,7 @@ module spi_flash(
 	// as soon as we detect the start of a read command, lock the sdram
 	// control for our exclusive access
 	reg spi_critical;
+	reg spi_output_enable;
 	reg ram_refresh_inhibit;
 
 	// synchronize the spi_cs line to our clock
@@ -67,6 +72,11 @@ module spi_flash(
 	always @(posedge clk) spi_cs_prev <= { spi_cs_prev[0], spi_cs };
 
 	reg [7:0] cycles;
+
+	// async page erase
+	reg erase_active;
+	reg [15:0] erase_len;
+	reg [31:0] erase_addr;
 
 	// commands are documented in various SPI flash datasheets,
 	// such as https://www.winbond.com/resource-files/w25q256fv_revg1_120214_qpi_website_rev_g.pdf
@@ -79,13 +89,13 @@ module spi_flash(
 	localparam SPI_CMD_SFDP = 8'h5a;
 	localparam SPI_CMD_RDID = 8'h9F;
 
-	localparam MODE_IDLE	= 0;
-	localparam MODE_READ	= 1;
-	localparam MODE_RDID	= 2;
-	localparam MODE_ERASE	= 3;
-	localparam MODE_WRITE	= 4;
+	localparam MODE_IDLE	= 4'h0;
+	localparam MODE_READ	= 4'h1;
+	localparam MODE_RDID	= 4'h2;
+	localparam MODE_ERASE	= 4'h3;
+	localparam MODE_WRITE	= 4'h4;
 
-	reg [2:0] spi_mode;
+	reg [3:0] spi_mode;
 	reg [23:0] spi_jid0 = { 8'hC2, 8'h20, 8'h18 }; // 16 MB flash chip
 
 	reg spi_status_srp0 = 0;
@@ -113,20 +123,23 @@ module spi_flash(
 		if (reset) begin
 			errors <= 0;
 			spi_critical <= 0;
+			spi_output_enable <= 0;
 			ram_refresh_inhibit <= 0;
-			ram_read_enable <= 0;
+			ram_enable <= 0;
 			read_immediate_update <= 0;
 			spi_mode <= 0;
+			erase_active <= 0;
 		end else
 		if (spi_cs_sync) begin
 			// no longer asserted, release our locks and signal
 			// a logging event if we had one
-			spi_critical <= 0;
+			// if we have an active erase do not release our sd lock
+			spi_critical <= erase_active;
+			spi_output_enable <= 0;
 			spi_count <= 0;
 			spi_rd_cmd <= 0;
 			spi_mode <= 0;
 			ram_refresh_inhibit <= 0;
-			ram_read_enable <= 0;
 			read_immediate_update <= 0;
 
 			//spi_tx_strobe <= 1;
@@ -138,6 +151,42 @@ module spi_flash(
 				// to notify that we've had a read transaction
 				if (!VERBOSE_LOGGING && spi_mode == MODE_READ)
 					log_strobe <= 1;
+			end
+
+			// if we're in erase mode, keep erasing
+			if (erase_active)
+			begin
+				if (erase_len && !ram_write_enable && !ram_enable)
+				begin
+					// erase the next word
+					ram_addr <= erase_addr;
+					ram_write_mask <= 2'b11;
+					ram_write_data <= 16'h0000;
+					ram_write_enable <= 1;
+					ram_enable <= 1;
+				end else
+				if (ram_data_valid && ram_write_enable) begin
+					// write complete, might have been
+					// interleaved with reads, so check that
+					// this was a write
+					ram_write_enable <= 0;
+					ram_enable <= 0;
+					erase_len <= erase_len - 2;
+					erase_addr <= erase_addr + 2;
+				end else
+				if (erase_len == 0)
+				begin
+					// last erase is done.
+					spi_critical <= 0;
+					erase_active <= 0;
+					spi_status_wrel <= 0;
+					spi_status_busy <= 0;
+				end
+			end else
+			if (ram_data_valid) begin
+				// someone was doing a read?
+				ram_write_enable <= 0;
+				ram_enable <= 0;
 			end
 		end else
 		if (spi_rx_cmd)
@@ -156,7 +205,9 @@ module spi_flash(
 			// exclusive access to the SD interface
 			case(spi_rx_data)
 			SPI_CMD_READ: begin
+				// will need to get the RAM
 				spi_critical <= 1;
+				spi_output_enable <= 1;
 				ram_refresh_inhibit <= 1;
 				spi_rd_cmd <= 1;
 				ram_addr[31:24] <= 0;
@@ -164,7 +215,9 @@ module spi_flash(
 				spi_mode <= MODE_READ;
 			end
 			SPI_CMD_SFDP: begin
+				// will need to get the RAM
 				spi_critical <= 1;
+				spi_output_enable <= 1;
 				ram_refresh_inhibit <= 1;
 				spi_rd_cmd <= 1;
 				ram_addr[31:24] <= SFDP_OFFSET;
@@ -174,10 +227,12 @@ module spi_flash(
 				// write enable
 				// TODO: check for write protect
 				spi_status_wrel <= 1;
+				spi_output_enable <= 1;
 			end
 			SPI_CMD_WRDS: begin
 				// write disable
 				spi_status_wrel <= 0;
+				spi_output_enable <= 1;
 			end
 			SPI_CMD_PP3: begin
 				// page program 3-byte
@@ -186,8 +241,10 @@ module spi_flash(
 				// TODO: buffer the incoming data
 				if (spi_status_wrel)
 				begin
+					spi_critical <= 1;
 					spi_rd_cmd <= 1; // pretend this is a read
 					spi_mode <= MODE_WRITE;
+					spi_output_enable <= 1;
 				end
 			end
 			SPI_CMD_ERASE: begin
@@ -195,19 +252,20 @@ module spi_flash(
 				// write enable latch must be set
 				if (spi_status_wrel)
 				begin
+					// will need RAM
+					spi_critical <= 1;
 					spi_rd_cmd <= 1;
 					spi_mode <= MODE_ERASE;
+					spi_output_enable <= 1;
 				end
 			end
 			SPI_CMD_RDSR: begin
-				// spi_critical also asserts MISO
-				spi_critical <= 1;
+				spi_output_enable <= 1;
 				spi_tx_data <= spi_status_reg;
 				spi_tx_strobe <= 1;
 			end
 			SPI_CMD_RDID: begin
-				// spi_critical also asserts MISO
-				spi_critical <= 1;
+				spi_output_enable <= 1;
 				spi_tx_data <= spi_jid0[23:16];
 				spi_tx_strobe <= 1;
 				spi_rd_cmd <= 1; // pretend this is a read
@@ -219,6 +277,7 @@ module spi_flash(
 				log_len <= spi_rx_data;
 				log_strobe <= 1;
 				spi_critical <= 0;
+				spi_output_enable <= 0;
 				ram_refresh_inhibit <= 0;
 				spi_rd_cmd <= 0;
 				errors[7] <= 1;
@@ -226,7 +285,7 @@ module spi_flash(
 			endcase
 		end else
 		if (!spi_rd_cmd) begin
-			// nothing to do for non-read commands right now
+			// nothing to do while !CS is active
 		end else
 		if (spi_rx_bit_strobe && spi_rx_bit == 6 && spi_count == 3)
 		begin
@@ -236,7 +295,7 @@ module spi_flash(
 
 			// not yet shifted
 			ram_addr[7:0] <= { spi_rx_data[6:0], 1'b0 };
-			ram_read_enable <= 1;
+			ram_enable <= 1;
 			read_complete <= 0;
 		end else
 		if (spi_rx_bit_strobe && spi_rx_bit == 1 && spi_count == 4)
@@ -244,18 +303,18 @@ module spi_flash(
 			// normal case, start a fetch for the next byte when
 			// we're partial the way done with this one
 			// since we know the address will be the next one
-			if (ram_read_enable)
+			if (ram_enable)
 				errors[4] <= 1;
 
-			ram_read_enable <= 1;
+			ram_enable <= 1;
 			read_complete <= 0;
 		end else
 		if (!spi_rx_strobe)
 		begin
 			// so disable the current read. the new one
 			// will be started at the end of this byte.
-			if (ram_read_valid) begin
-				ram_read_enable <= 0;
+			if (ram_data_valid) begin
+				ram_enable <= 0;
 				read_complete <= 1;
 
 				// Special case if we missed the rising edge
@@ -296,7 +355,7 @@ module spi_flash(
 			// we don't care about the data, so don't do an update
 			if (spi_mode == MODE_READ)
 			begin
-				ram_read_enable <= 1;
+				ram_enable <= 1;
 				read_complete <= 0;
 				read_immediate_update <= 0;
 			end
@@ -320,7 +379,7 @@ module spi_flash(
 			ram_addr[ 7: 0] <= spi_rx_data + (spi_rd_dummy ? 0 : 1);
 			spi_count <= 4;
 
-			if (read_complete || ram_read_valid) begin
+			if (read_complete || ram_data_valid) begin
 				// the read has already returned 16-bits of data to
 				// us for either byte. choose which one and setup
 				// the TX
@@ -350,6 +409,16 @@ module spi_flash(
 				end
 			end
 
+			// if we are in erase mode, start the page erasure
+			// len should be configurable, always align start address
+			// set the busy flag 
+			if (spi_mode == MODE_ERASE && spi_status_wrel)
+			begin
+				spi_status_busy <= 1;
+				erase_len <= 4096; // bytes
+				erase_addr <= { ram_addr[31:12], 12'b0 };
+			end
+
 		end else
 		if (spi_count == 4)
 		begin
@@ -358,7 +427,7 @@ module spi_flash(
 			log_len <= log_len + 1;
 			ram_addr[7:0] <= ram_addr[7:0] + 8'h01;
 
-			if (read_complete || ram_read_valid) begin
+			if (read_complete || ram_data_valid) begin
 				// the read has already returned 16-bits of data to
 				// us for either byte. choose which one and setup
 				// the TX
@@ -389,11 +458,13 @@ module spi_flash(
 			// ok the allow refresh cycles, but we still have
 			// the sdram locked with spi_critical
 			ram_refresh_inhibit <= 0;
+
 		end else
 		begin
 			// error! invalid state wtf
 			errors[7] <= 1;
 			spi_critical <= 0;
+			spi_output_enable <= 0;
 		end
 	end
 endmodule
