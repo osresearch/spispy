@@ -10,6 +10,7 @@ my $data = <>;
 my $len = length $data;
 
 print "!W",
+	chr(($len >> 24) & 0xFF),
 	chr(($len >> 16) & 0xFF),
 	chr(($len >>  8) & 0xFF),
 	chr(($len >>  0) & 0xFF),

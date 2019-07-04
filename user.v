@@ -34,13 +34,14 @@ module user_command_parser(
 	reg wr_pending;
 	reg rd_pending;
 	reg [ADDR_BITS-1:0] sd_addr;
-	reg [23:0] msg_len; // up to 16 MB at a time
+	reg [31:0] msg_len; // up to 16 MB at a time
 
 	reg [5:0] cmd_mode;
 	reg [5:0] mode;
 	localparam
 		MODE_WAIT	= 6'b000000,
 		MODE_CMD	= 6'b000100,
+		MODE_L3		= 6'b100001,
 		MODE_L2		= 6'b000001,
 		MODE_L1		= 6'b000010,
 		MODE_L0		= 6'b000011,
@@ -111,6 +112,10 @@ module user_command_parser(
 				uart_txd_strobe <= 1;
 			end
 		end
+		MODE_L3: begin
+			msg_len[31:24] <= fifo_rxd;
+			mode <= MODE_L2;
+		end
 		MODE_L2: begin
 			msg_len[23:16] <= fifo_rxd;
 			mode <= MODE_L1;
@@ -148,11 +153,11 @@ module user_command_parser(
 			case(fifo_rxd)
 			CMD_RD: begin
 				cmd_mode <= MODE_RD;
-				mode <= MODE_L2;
+				mode <= MODE_L3;
 			end
 			CMD_WR: begin
 				cmd_mode <= MODE_WR;
-				mode <= MODE_L2;
+				mode <= MODE_L3;
 			end
 			CMD_VERSION: begin
 				mode <= MODE_VERSION;
