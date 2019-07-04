@@ -45,7 +45,7 @@ module top(
 );
 	parameter MONITOR_MODE = 0;
 	wire ENABLE_EMULATION = 1;
-	wire ENABLE_TOCTOU = 1; // if there is an existing flash that we're modifying
+	wire ENABLE_TOCTOU = 0; // if there is an existing flash that we're modifying
 	parameter LOG_ALL_BYTES = 0;
 	parameter VERBOSE_LOGGING = 0;
 `define USB_SERIAL
@@ -100,6 +100,7 @@ module top(
 
 `define EMU
 `ifdef EMU
+	(* PULLMODE="UP" *)
 	TRELLIS_IO #(.DIR("BIDIR")) spi_cs_buf(
 		.T(!spi_cs_enable),
 		.B(spi_cs_pin),
@@ -299,10 +300,13 @@ module top(
 		.serial_rxd(ftdi_txd), // fpga <-- ftdi
 		// logical
 		.txd(uart_txd),
-		//.txd_ready(uart_txd_ready),
 		.txd_strobe(uart_txd_strobe),
-		//.rxd(uart_rxd),
-		//.rxd_strobe(uart_rxd_strobe),
+`ifndef USB_SERIAL
+		// use this for our outputs
+		.txd_ready(uart_txd_ready),
+		.rxd(uart_rxd),
+		.rxd_strobe(uart_rxd_strobe),
+`endif
 	);
 
 	// sdram logical interface has a 16-bit data interface
@@ -545,8 +549,9 @@ sdram_ctrl0 (
 			uart_txd_strobe <= 1;
 			uart_txd <= user_txd;
 		end else begin
-			led_reg[0] <= spi_cs_in;
-			led_reg[1] <= spi_critical;
+			led_reg[0] <= !spi_cs_in;
+			led_reg[1] <= spi_output_enable;
+			led_reg[2] <= spi_critical;
 			led_reg[3] <= sd_we;
 			led_reg[7:4] <= spi_errors[7:4];
 		end
