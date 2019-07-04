@@ -129,6 +129,7 @@ module spi_flash(
 			read_immediate_update <= 0;
 			spi_mode <= 0;
 			erase_active <= 0;
+			erase_len <= 0;
 		end else
 		if (spi_cs_sync) begin
 			// no longer asserted, release our locks and signal
@@ -146,7 +147,7 @@ module spi_flash(
 			begin
 				// without verbose logging this is the time
 				// to notify that we've had a read transaction
-				if (!VERBOSE_LOGGING && spi_mode == MODE_READ)
+				if (!VERBOSE_LOGGING) // && (spi_mode != MODE_READ))
 					log_strobe <= 1;
 			end
 
@@ -157,12 +158,23 @@ module spi_flash(
 			// if we're in erase mode, keep erasing
 			if (erase_active)
 			begin
-				if (erase_len && !ram_write_enable && !ram_enable)
+				if (erase_len == 0)
+				begin
+					// last erase is done.
+					spi_critical <= 0;
+					erase_active <= 0;
+
+					// unset our status register flags
+					errors[7] <= 0;
+					spi_status_wrel <= 0;
+					spi_status_busy <= 0;
+				end else
+				if (!ram_enable)
 				begin
 					// erase the next word
 					ram_addr <= erase_addr;
-					ram_write_mask <= 2'b11;
-					ram_write_data <= 16'h0000;
+					ram_write_mask <= 2'b11; // both words
+					ram_write_data <= 16'hFFFF;
 					ram_write_enable <= 1;
 					ram_enable <= 1;
 				end else
@@ -170,18 +182,11 @@ module spi_flash(
 					// write complete, might have been
 					// interleaved with reads, so check that
 					// this was a write
+					errors[7] <= ~errors[7];
 					ram_write_enable <= 0;
 					ram_enable <= 0;
 					erase_len <= erase_len - 2;
 					erase_addr <= erase_addr + 2;
-				end else
-				if (erase_len == 0)
-				begin
-					// last erase is done.
-					spi_critical <= 0;
-					erase_active <= 0;
-					spi_status_wrel <= 0;
-					spi_status_busy <= 0;
 				end
 			end else
 			if (ram_data_valid) begin
@@ -283,7 +288,7 @@ module spi_flash(
 				spi_output_enable <= 0;
 				ram_refresh_inhibit <= 0;
 				spi_rd_cmd <= 0;
-				errors[7] <= 1;
+				errors[6] <= 1;
 			end
 			endcase
 		end else
@@ -314,9 +319,43 @@ module spi_flash(
 		end else
 		if (!spi_rx_strobe)
 		begin
-			// disable the current read or write. the new one
-			// will be started at the end of this byte.
+			// if we're in erase mode, keep erasing
+			if (erase_active)
+			begin
+				if (erase_len == 0)
+				begin
+					// last erase is done.
+					spi_critical <= 0;
+					erase_active <= 0;
+
+					// unset our status register flags
+					errors[7] <= 0;
+					spi_status_wrel <= 0;
+					spi_status_busy <= 0;
+				end else
+				if (!ram_enable)
+				begin
+					// erase the next word
+					ram_addr <= erase_addr;
+					ram_write_mask <= 2'b11; // both words
+					ram_write_data <= 16'hFFFF;
+					ram_write_enable <= 1;
+					ram_enable <= 1;
+				end else
+				if (ram_data_valid && ram_write_enable) begin
+					// write complete, might have been
+					// interleaved with reads, so check that
+					// this was a write
+					errors[7] <= ~errors[7];
+					ram_write_enable <= 0;
+					ram_enable <= 0;
+					erase_len <= erase_len - 2;
+					erase_addr <= erase_addr + 2;
+				end
+			end else
 			if (ram_data_valid) begin
+				// disable the current read or write. the new one
+				// will be started at the end of this byte.
 				ram_write_enable <= 0;
 				ram_enable <= 0;
 				read_complete <= 1;
@@ -412,7 +451,7 @@ module spi_flash(
 				// immediate update flag and hope it arrives
 				// before the falling edge
 				read_immediate_update <= 1;
-				errors[6] <= 1;
+				//errors[6] <= 1;
 				if (VERBOSE_LOGGING) begin
 					log_addr <= "LOST";
 					log_len <= 8'hAF;
@@ -426,7 +465,8 @@ module spi_flash(
 			if (spi_mode == MODE_ERASE && spi_status_wrel)
 			begin
 				spi_status_busy <= 1;
-				erase_len <= 4096; // bytes
+				erase_active <= 1;
+				erase_len <= 16'h01000; // 4096 bytes
 				erase_addr <= { ram_addr[31:12], 12'b0 };
 			end
 
@@ -479,7 +519,7 @@ module spi_flash(
 				// immediate update flag and hope it arrives
 				// before the falling edge
 				read_immediate_update <= 1;
-				errors[5] <= 1;
+				//errors[5] <= 1;
 			end
 
 			// our timing window is no longer critical, so it is
@@ -490,7 +530,7 @@ module spi_flash(
 		end else
 		begin
 			// error! invalid state wtf
-			errors[7] <= 1;
+			errors[6] <= 1;
 			spi_critical <= 0;
 			spi_output_enable <= 0;
 		end
