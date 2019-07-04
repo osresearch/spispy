@@ -29,7 +29,9 @@ module spi_flash(
 	output	ram_refresh_inhibit, // asserted when we really need the RAM
 	output [31:0] ram_addr,
 	output ram_read_enable,
+	output ram_write_enable,
 	input [15:0] ram_read_data,
+	output [15:0] ram_write_data,
 	input ram_read_valid, // when the data is valid
 
 	// logging interface. valid until the next command starts
@@ -77,7 +79,13 @@ module spi_flash(
 	localparam SPI_CMD_SFDP = 8'h5a;
 	localparam SPI_CMD_RDID = 8'h9F;
 
-	reg spi_rdid = 0;
+	localparam MODE_IDLE	= 0;
+	localparam MODE_READ	= 1;
+	localparam MODE_RDID	= 2;
+	localparam MODE_ERASE	= 3;
+	localparam MODE_WRITE	= 4;
+
+	reg [2:0] spi_mode;
 	reg [23:0] spi_jid0 = { 8'hC2, 8'h20, 8'h18 }; // 16 MB flash chip
 
 	reg spi_status_srp0 = 0;
@@ -108,7 +116,7 @@ module spi_flash(
 			ram_refresh_inhibit <= 0;
 			ram_read_enable <= 0;
 			read_immediate_update <= 0;
-			spi_rdid <= 0;
+			spi_mode <= 0;
 		end else
 		if (spi_cs_sync) begin
 			// no longer asserted, release our locks and signal
@@ -116,7 +124,7 @@ module spi_flash(
 			spi_critical <= 0;
 			spi_count <= 0;
 			spi_rd_cmd <= 0;
-			spi_rdid <= 0;
+			spi_mode <= 0;
 			ram_refresh_inhibit <= 0;
 			ram_read_enable <= 0;
 			read_immediate_update <= 0;
@@ -128,7 +136,7 @@ module spi_flash(
 			begin
 				// without verbose logging this is the time
 				// to notify that we've had a read transaction
-				if (!VERBOSE_LOGGING && !spi_rdid)
+				if (!VERBOSE_LOGGING && spi_mode == MODE_READ)
 					log_strobe <= 1;
 			end
 		end else
@@ -138,6 +146,7 @@ module spi_flash(
 			ram_addr <= 0;
 			log_addr <= 0;
 			log_len <= 0;
+			spi_rd_cmd <= 0;
 
 			spi_count <= 1;
 			//spi_tx_data <= 8'hF1;
@@ -152,6 +161,7 @@ module spi_flash(
 				spi_rd_cmd <= 1;
 				ram_addr[31:24] <= 0;
 				spi_rd_dummy <= 0;
+				spi_mode <= MODE_READ;
 			end
 			SPI_CMD_SFDP: begin
 				spi_critical <= 1;
@@ -161,57 +171,47 @@ module spi_flash(
 				spi_rd_dummy <= 1;
 			end
 			SPI_CMD_WREN: begin
-				// write enable. narf
-				spi_critical <= 1;
-				log_addr <= { 16'hBAD0, spi_rx_data };
-				log_strobe <= 1;
+				// write enable
+				// TODO: check for write protect
 				spi_status_wrel <= 1;
-				errors[4] <= 1;
 			end
 			SPI_CMD_WRDS: begin
 				// write disable
-				spi_critical <= 1;
 				spi_status_wrel <= 0;
-				log_addr <= { 16'hBAD0, spi_rx_data };
-				log_strobe <= 1;
-				errors[5] <= 1;
 			end
 			SPI_CMD_PP3: begin
-				// page program 3-byte (ignored)
-				// but this does clear the latch
-				spi_critical <= 1;
-				spi_status_wrel <= 0;
-				log_addr <= { 16'hBAD0, spi_rx_data };
-				log_strobe <= 1;
-				errors[5] <= 1;
+				// page program 3-byte
+				// write enable latch must be set
+				// TODO: check for write protect
+				// TODO: buffer the incoming data
+				if (spi_status_wrel)
+				begin
+					spi_rd_cmd <= 1; // pretend this is a read
+					spi_mode <= MODE_WRITE;
+				end
 			end
 			SPI_CMD_ERASE: begin
 				// erase sector with 3-byte address (ignored)
-				// but this does clear the latch
-				spi_critical <= 1;
-				spi_status_wrel <= 0;
-				log_addr <= { 16'hBAD0, spi_rx_data };
-				log_strobe <= 1;
-				errors[5] <= 1;
+				// write enable latch must be set
+				if (spi_status_wrel)
+				begin
+					spi_rd_cmd <= 1;
+					spi_mode <= MODE_ERASE;
+				end
 			end
 			SPI_CMD_RDSR: begin
+				// spi_critical also asserts MISO
 				spi_critical <= 1;
 				spi_tx_data <= spi_status_reg;
 				spi_tx_strobe <= 1;
-				spi_rd_cmd <= 1; // pretend this is a read
-				log_addr <= { 16'hBAD0, spi_rx_data };
-				log_strobe <= 1;
-				errors[6] <= 1;
 			end
 			SPI_CMD_RDID: begin
+				// spi_critical also asserts MISO
 				spi_critical <= 1;
 				spi_tx_data <= spi_jid0[23:16];
 				spi_tx_strobe <= 1;
 				spi_rd_cmd <= 1; // pretend this is a read
-				spi_rdid <= 1;
-				log_addr <= { 16'hBAD0, spi_rx_data };
-				log_strobe <= 1;
-				errors[6] <= 1;
+				spi_mode <= MODE_RDID;
 			end
 			default: begin
 				// log the unknown command with a zero address
@@ -279,9 +279,11 @@ module spi_flash(
 			spi_count <= 2;
 
 			// send the jdid id while everything is happening
-			spi_tx_data <= spi_jid0[15: 8];
-			if (spi_rdid)
+			if (spi_mode == MODE_RDID)
+			begin
+				spi_tx_data <= spi_jid0[15: 8];
 				spi_tx_strobe <= 1;
+			end
 		end else
 		if (spi_count == 2)
 		begin
@@ -292,14 +294,19 @@ module spi_flash(
 			// SDRAM should not be busy since we've paused
 			// refresh and asserted the priority flag
 			// we don't care about the data, so don't do an update
-			ram_read_enable <= 1;
-			read_complete <= 0;
-			read_immediate_update <= 0;
+			if (spi_mode == MODE_READ)
+			begin
+				ram_read_enable <= 1;
+				read_complete <= 0;
+				read_immediate_update <= 0;
+			end
 
 			// send the jdid id while everything is happening
-			spi_tx_data <= spi_jid0[ 7: 0];
-			if (spi_rdid)
+			if (spi_mode == MODE_RDID)
+			begin
+				spi_tx_data <= spi_jid0[ 7: 0];
 				spi_tx_strobe <= 1;
+			end
 		end else
 		if (spi_count == 3)
 		begin
