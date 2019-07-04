@@ -142,9 +142,6 @@ module spi_flash(
 			ram_refresh_inhibit <= 0;
 			read_immediate_update <= 0;
 
-			//spi_tx_strobe <= 1;
-			//spi_tx_data <= 8'hFF;
-
 			if (spi_cs_rising && spi_rd_cmd && spi_count == 4)
 			begin
 				// without verbose logging this is the time
@@ -152,6 +149,10 @@ module spi_flash(
 				if (!VERBOSE_LOGGING && spi_mode == MODE_READ)
 					log_strobe <= 1;
 			end
+
+			// if we are exiting from MODE_WRITE, unset the write latch
+			if (spi_mode == MODE_WRITE)
+				spi_status_wrel <= 0;
 
 			// if we're in erase mode, keep erasing
 			if (erase_active)
@@ -222,6 +223,7 @@ module spi_flash(
 				spi_rd_cmd <= 1;
 				ram_addr[31:24] <= SFDP_OFFSET;
 				spi_rd_dummy <= 1;
+				spi_mode <= MODE_READ;
 			end
 			SPI_CMD_WREN: begin
 				// write enable
@@ -241,6 +243,7 @@ module spi_flash(
 				// TODO: buffer the incoming data
 				if (spi_status_wrel)
 				begin
+					// will need RAM
 					spi_critical <= 1;
 					spi_rd_cmd <= 1; // pretend this is a read
 					spi_mode <= MODE_WRITE;
@@ -287,7 +290,7 @@ module spi_flash(
 		if (!spi_rd_cmd) begin
 			// nothing to do while !CS is active
 		end else
-		if (spi_rx_bit_strobe && spi_rx_bit == 6 && spi_count == 3)
+		if (spi_rx_bit_strobe && spi_rx_bit == 6 && spi_count == 3 && spi_mode == MODE_READ)
 		begin
 			// special case for the next to last bit on the incoming
 			// address.  we have 23 of the 24 bits, which allow us to
@@ -298,7 +301,7 @@ module spi_flash(
 			ram_enable <= 1;
 			read_complete <= 0;
 		end else
-		if (spi_rx_bit_strobe && spi_rx_bit == 1 && spi_count == 4)
+		if (spi_rx_bit_strobe && spi_rx_bit == 1 && spi_count == 4 && spi_mode == MODE_READ)
 		begin
 			// normal case, start a fetch for the next byte when
 			// we're partial the way done with this one
@@ -311,9 +314,10 @@ module spi_flash(
 		end else
 		if (!spi_rx_strobe)
 		begin
-			// so disable the current read. the new one
+			// disable the current read or write. the new one
 			// will be started at the end of this byte.
 			if (ram_data_valid) begin
+				ram_write_enable <= 0;
 				ram_enable <= 0;
 				read_complete <= 1;
 
@@ -376,7 +380,14 @@ module spi_flash(
 			// the next read will start one byte higher
 			// for a normal read, otherwise on the same byte for
 			// one with a dummy read
-			ram_addr[ 7: 0] <= spi_rx_data + (spi_rd_dummy ? 0 : 1);
+			if (spi_rd_dummy)
+				ram_addr[ 7: 0] <= spi_rx_data; // start this one
+			else
+			if (spi_mode == MODE_WRITE)
+				ram_addr[ 7: 0] <= spi_rx_data - 1; // start one before
+			else
+				ram_addr[ 7: 0] <= spi_rx_data + 1; // start one after
+
 			spi_count <= 4;
 
 			if (read_complete || ram_data_valid) begin
@@ -427,6 +438,23 @@ module spi_flash(
 			log_len <= log_len + 1;
 			ram_addr[7:0] <= ram_addr[7:0] + 8'h01;
 
+			if (spi_mode == MODE_WRITE) begin
+				// write this into the flash
+				// todo: should we implement the bad behaviour
+				// of flipping the bits?
+				ram_enable <= 1;
+				ram_write_enable <= 1;
+
+				// note that this is backwards since ram addr
+				// is incremented on this same cycle
+				if (ram_addr[0]) begin
+					ram_write_mask <= 2'b01;
+					ram_write_data <= { 8'h0, spi_rx_data };
+				end else begin
+					ram_write_mask <= 2'b10;
+					ram_write_data <= { spi_rx_data, 8'h0 };
+				end
+			end else
 			if (read_complete || ram_data_valid) begin
 				// the read has already returned 16-bits of data to
 				// us for either byte. choose which one and setup
