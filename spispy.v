@@ -45,7 +45,7 @@ module top(
 );
 	parameter MONITOR_MODE = 0;
 	wire ENABLE_EMULATION = 1;
-	wire ENABLE_TOCTOU = 1; // if there is an existing flash that we're modifying
+	wire ENABLE_TOCTOU = 0; // if there is an existing flash that we're modifying
 	parameter LOG_ALL_BYTES = 0;
 	parameter VERBOSE_LOGGING = 0;
 `define USB_SERIAL
@@ -76,10 +76,10 @@ module top(
 
 	// !CS is driven high if we are in TOCTOU mode since the existing flash
 	// chip needs to be turned off.
-	wire spi_cs_enable = spi_critical && !spi_timeout && ENABLE_EMULATION && ENABLE_TOCTOU && !MONITOR_MODE;
+	wire spi_cs_enable = spi_output_enable && !spi_timeout && ENABLE_EMULATION && ENABLE_TOCTOU && !MONITOR_MODE;
 	// MISO is driven high if we are in emulation mode or TOCTOU mode
 	//wire spi_miso_enable = spi_critical && !spi_timeout && ENABLE_EMULATION;
-	wire spi_miso_enable = spi_critical && ENABLE_EMULATION && !MONITOR_MODE;
+	wire spi_miso_enable = spi_output_enable && ENABLE_EMULATION && !MONITOR_MODE;
 
 	// if we are driving !CS high, we have to fake a low !CS for the other
 	// parts of our logic.
@@ -100,6 +100,7 @@ module top(
 
 `define EMU
 `ifdef EMU
+	(* PULLMODE="UP" *)
 	TRELLIS_IO #(.DIR("BIDIR")) spi_cs_buf(
 		.T(!spi_cs_enable),
 		.B(spi_cs_pin),
@@ -175,6 +176,7 @@ module top(
 	// there is a race condition with asserting this while the bus is busy
 	// so don't mix serial operations with booting the machine right now
 	wire spi_critical;
+	wire spi_output_enable;
 	wire spi_refresh_inhibit;
 
 	// these will be written to the serial port
@@ -184,15 +186,18 @@ module top(
 	wire [7:0] spi_errors;
 
 	// interface to the memory
-	wire [31:0] spi_read_addr;
-	wire [7:0] spi_read_data;
-	wire spi_read_enable;
+	wire [31:0] spi_sd_addr;
+	wire [15:0] spi_sd_wr_data;
+	wire [1:0] spi_sd_wr_mask;
+	wire spi_sd_enable;
+	wire spi_sd_we;
 
 	spi_flash spi_f(
 		.clk(clk),
 		.reset(reset),
 
 		// spi bus interface
+		.spi_output_enable(spi_output_enable),
 		.spi_cs(spi_cs_fake),
 		.spi_rx_data(spi_rx_data),
 		.spi_rx_cmd(spi_rx_cmd),
@@ -205,10 +210,13 @@ module top(
 		// memory interface
 		.spi_critical(spi_critical),
 		.ram_refresh_inhibit(spi_refresh_inhibit),
-		.ram_addr(spi_read_addr),
-		.ram_read_enable(spi_read_enable), // when an address has been received
+		.ram_addr(spi_sd_addr),
+		.ram_enable(spi_sd_enable), // when an address has been received
 		.ram_read_data(sd_rd_data),
-		.ram_read_valid(sd_ack),
+		.ram_data_valid(sd_ack),
+		.ram_write_enable(spi_sd_we),
+		.ram_write_data(spi_sd_wr_data),
+		.ram_write_mask(spi_sd_wr_mask),
 
 		// logging interface
 		.log_strobe(spi_log_strobe),
@@ -292,10 +300,13 @@ module top(
 		.serial_rxd(ftdi_txd), // fpga <-- ftdi
 		// logical
 		.txd(uart_txd),
-		//.txd_ready(uart_txd_ready),
 		.txd_strobe(uart_txd_strobe),
-		//.rxd(uart_rxd),
-		//.rxd_strobe(uart_rxd_strobe),
+`ifndef USB_SERIAL
+		// use this for our outputs
+		.txd_ready(uart_txd_ready),
+		.rxd(uart_rxd),
+		.rxd_strobe(uart_rxd_strobe),
+`endif
 	);
 
 	// sdram logical interface has a 16-bit data interface
@@ -315,11 +326,11 @@ module top(
 	// signal, which takes over all of the inputs
 	// note that right now the sdram is 16-bit wide, but we read only the bottom byte
 	// so it is necessary to shift the address by 1
-	wire sd_we = spi_critical ? 1'b0 : user_sd_we;
-	wire sd_enable = spi_critical ? spi_read_enable : user_sd_enable;
-	wire [31:0] sd_addr = spi_critical ? spi_read_addr : user_sd_addr;
-	wire [DATA_WIDTH-1:0] sd_wr_data = spi_critical ? 16'hDEAD : user_sd_wr_data;
-	wire [1:0] sd_wr_mask = spi_critical ? 2'b00 : user_sd_wr_mask;
+	wire sd_we = spi_critical ? spi_sd_we : user_sd_we;
+	wire sd_enable = spi_critical ? spi_sd_enable : user_sd_enable;
+	wire [31:0] sd_addr = spi_critical ? spi_sd_addr : user_sd_addr;
+	wire [DATA_WIDTH-1:0] sd_wr_data = spi_critical ? spi_sd_wr_data : user_sd_wr_data;
+	wire [1:0] sd_wr_mask = spi_critical ? spi_sd_wr_mask : user_sd_wr_mask;
 
 	// convert the sd_ack signal from a level to an edge sensitive
 	reg sd_ack_prev;
@@ -538,8 +549,9 @@ sdram_ctrl0 (
 			uart_txd_strobe <= 1;
 			uart_txd <= user_txd;
 		end else begin
-			led_reg[0] <= spi_cs_in;
-			led_reg[1] <= spi_critical;
+			led_reg[0] <= !spi_cs_in;
+			led_reg[1] <= spi_output_enable;
+			led_reg[2] <= spi_critical;
 			led_reg[3] <= sd_we;
 			led_reg[7:4] <= spi_errors[7:4];
 		end
