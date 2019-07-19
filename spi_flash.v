@@ -466,7 +466,7 @@ module spi_flash(
 			begin
 				spi_status_busy <= 1;
 				erase_active <= 1;
-				erase_len <= 16'h01000; // 4096 bytes
+				erase_len <= 16'h1000; // 4096 bytes
 				erase_addr <= { ram_addr[31:12], 12'b0 };
 			end
 
@@ -537,3 +537,4 @@ module spi_flash(
 	end
 endmodule
 
+`endif
