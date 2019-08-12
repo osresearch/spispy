@@ -16,11 +16,15 @@ might be portable to the TinyFPGA-EX or other open source ECP5 boards,
 although it uses a custom SDRAM controller to be able to meet the
 difficult timing requirements of the SPI flash protocol (described below).
 
+It has been tested on the Thinkpad x230 (no SFDP) and the
+Supermicro X11SSH-F (with SFDP).  Write support is very flaky; the entire
+state machine needs to be redone ([issue #17](https://github.com/osresearch/spispy/issues/17)).
+
 ## Supported features
 * Single SPI up to 20 MHz clock
 * 3-byte addressing (up to 16 MB of flash image)
-* Serial port updates to the SDRAM (could be faster [issue #11](https://github.com/osresearch/spispy/issues/11)]
-and could be better [issue #3](https://github.com/osresearch/spispy/issues/3))
+* High-speed (1 MB/s) `/dev/ttyACM0` interface
+* Serial port updates to the SDRAM (could have a better interface [issue #3](https://github.com/osresearch/spispy/issues/3))
 * Logging flash access patterns (could be longer, [issue #5](https://github.com/osresearch/spispy/issues/5))
 * SFDP pages ([with some caveats](https://github.com/osresearch/spispy/issues/9))
 * TOCTOU changes to the flash image based on read patterns
@@ -33,8 +37,7 @@ and could be better [issue #3](https://github.com/osresearch/spispy/issues/3))
 * Status registers (partially supported, could be better)
 * Block protection bits (maybe worth it, probably not)
 * Linux RISC-V core in the FPGA
-  * Serial port for console
-  * Higher bandwidth programming over separate USB endpoint ([issue #11](https://github.com/osresearch/spispy/issues/11))
+  * Ethernet over USB-CDC-EEM ([maybe working on the ulx3s?](https://github.com/hdl4fpga/hdl4fpga/issues/165#issuecomment-519941110))
   * Default flash image on SD card
   * A decent API for TOCTOU exploration
 
