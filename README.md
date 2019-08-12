@@ -71,6 +71,35 @@ If you have more modern system, it _might_ use 1.8v and driving it at the higher
 voltage can cause problems.  We need to test this and figure out if alternate
 output voltages can be selected on the pins. ([issue #10](https://github.com/osresearch/spispy/issues/10))
 
+# Usage
+![spispy connected to a Supermicro X11SSH-F mainboard](images/mainboard.jpg)
+
+If using the spispy with a clip you can leave the `Vcc` pin disconnected.
+Be sure to set the `TOCTOU` flag in the `spispy.v` file so that the spispy will
+prevent the real flash from responding.
+
+When you plug in the spispy it should show up as a USB-CDC-ACM device with
+a device file like `/dev/ttyACM0`.  You might have to start `minicom` or some
+other terminal program to configure the control lines correctly (and to prevent
+`ModemManager` from screwing with it).
+
+Install the `sfdp.bin` image into the top of DRAM to tell the PCH that the flash
+only supports single read commands at the slowest speed:
+```
+write-ram 0x1000000 sfdp.bin > /dev/ttyACM0
+```
+
+Install the ROM image into the bottom of DRAM (`pv` is optional to provide a bargraph
+and bandwidth measurement):
+```
+write-ram 0x0 coreboot.bin | pv > /dev/ttyACM0
+```
+
+If you want to update part of the ROM image, such as the top 8 MB of the coreboot image,
+you can use `dd` to extract that part:
+```
+dd < coreboot.bin bs=1024 skip=8192 | write-ram 0x800000 | pv > /dev/ttyACM0
+```
 
 # Protocol
 ![SPI data](images/data.jpg)
