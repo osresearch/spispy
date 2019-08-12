@@ -45,7 +45,7 @@ module top(
 );
 	parameter MONITOR_MODE = 0;
 	wire ENABLE_EMULATION = 1;
-	wire ENABLE_TOCTOU = 0; // if there is an existing flash that we're modifying
+	wire ENABLE_TOCTOU = 1; // if there is an existing flash that we're modifying or overruling
 	parameter LOG_ALL_BYTES = 0;
 	parameter VERBOSE_LOGGING = 0;
 `define USB_SERIAL
