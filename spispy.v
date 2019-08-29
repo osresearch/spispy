@@ -1,5 +1,8 @@
 /*
- * ECP5 flash emulator
+ * ECP5 flash emulator using the ULX3S board
+ *
+ * Wiring is on the left headers.
+ * Desolder the RV3 resistor so that the flash chip voltage is auto-selecting
  */
 `default_nettype none
 `include "uart.v"
@@ -8,6 +11,7 @@
 `include "sdram_ctrl.v"
 `include "spi_device.v"
 `include "spi_flash.v"
+`include "util.v"
 `include "user.v"
 `include "usb_serial.v"
 
@@ -38,15 +42,15 @@ module top(
 
 	// GPIO pins, to be assigned
 	inout [27:0] gp,
-	inout [27:0] gn,
+	output [27:0] gn,
 
 	// buttons for user io
 	input [6:0] btn,
 );
 	parameter MONITOR_MODE = 0;
-	wire ENABLE_EMULATION = 1;
+	wire ENABLE_EMULATION = 0;
 	wire ENABLE_TOCTOU = 1; // if there is an existing flash that we're modifying or overruling
-	parameter LOG_ALL_BYTES = 0;
+	parameter LOG_ALL_BYTES = 1;
 	parameter VERBOSE_LOGGING = 0;
 `define USB_SERIAL
 
@@ -67,12 +71,19 @@ module top(
 	wire clk_48;
 	pll_48 pll_48_i(clk_132, clk_48);
 
-	// SPI bus is on the J2 positive pins
-	wire spi_cs_pin = gp[20];
-	wire spi_clk_pin = gp[19];
-	wire spi_mosi_pin = gp[18];
-	wire spi_miso_pin = gp[17];
+	// SPI bus is on the J1 positive pins
+	wire spi_cs_pin = gp[7];
+	wire spi_clk_pin = gp[8];
+	wire spi_mosi_pin = gp[9];
+	wire spi_miso_pin = gp[10];
 	wire spi_cs_out_pin = gp[16]; // for toctou on a flash without pullup
+
+	assign gn[15] = spi_rx_cmd && spi_rx_data != 8'h03;
+	assign gn[19] = spi_clk_in;
+	assign gn[20] = spi_cs_in;
+
+	//TRELLIS_IO #(.DIR("OUTPUT")) buf_19(.B(gn[19]),.I(spi_clk_in));
+	//TRELLIS_IO #(.DIR("OUTPUT")) buf_20(.B(gn[20]),.I(spi_cs_in));
 
 	// !CS is driven high if we are in TOCTOU mode since the existing flash
 	// chip needs to be turned off.
@@ -290,7 +301,7 @@ module top(
 	uart #(
 		.DIVISOR(132 / 3), // 132 MHz
 		//.DIVISOR(96 / 3),
-		.FIFO(65536),
+		.FIFO(512),
 		.FREESPACE(16),
 	) uart_i(
 		.clk(clk),
@@ -507,7 +518,7 @@ sdram_ctrl0 (
 			end
 		end else
 		
-		if (spi_log_strobe) // && uart_txd_ready)
+		if (spi_log_strobe && !LOG_ALL_BYTES) // && uart_txd_ready)
 		begin
 			// a SPI transaction has just occured;
 			// write it to the serial port if there is space
@@ -537,10 +548,38 @@ sdram_ctrl0 (
 			uart_txd <= uart_word[63:56];
 			uart_word <= uart_word << 8;
 		end else
-		if (spi_tx_strobe && LOG_ALL_BYTES)
+		if (spi_rx_strobe && LOG_ALL_BYTES)
 		begin
-			uart_txd_strobe <= 1;
-			uart_txd <= spi_log_len; // spi_tx_data;
+			if (spi_rx_cmd)
+			begin
+				spi_rx_bytes <= 0;
+				uart_txd_strobe <= 1;
+				uart_txd <= spi_rx_data;
+/*
+				uart_word <= {
+					"\r",
+					"\n",
+					`hexdigit(spi_rx_data[7:4]),
+					`hexdigit(spi_rx_data[3:0]),
+					32'h0
+				};
+				uart_words <= 4;
+*/
+			end else
+			if (spi_rx_bytes < 3)
+			begin
+				spi_rx_bytes <= spi_rx_bytes + 1;
+				uart_txd_strobe <= 1;
+				uart_txd <= spi_rx_data;
+/*
+				uart_word <= {
+					`hexdigit(spi_rx_data[7:4]),
+					`hexdigit(spi_rx_data[3:0]),
+					48'h0
+				};
+				uart_words <= 2;
+*/
+			end
 		end else
 		if (user_txd_strobe) // && uart_txd_ready)
 		begin
