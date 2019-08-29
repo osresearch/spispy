@@ -21,6 +21,7 @@ module top(
 	output wifi_gpio0,
 	input ftdi_txd, // from the ftdi chip
 	output ftdi_rxd, // to the ftdi chip
+	output user_programn, // reboot from the user space on the flash
 
 	// sdram physical interface
 	output [12:0] sdram_a,
@@ -56,6 +57,12 @@ module top(
 
 	// gpio0 must be tied high to prevent board from rebooting
 	assign wifi_gpio0 = 1;
+
+        // button 0 is the power and is negative logic
+	// hold it in to reboot the board to the bootloader
+        reg [7:0] reboot;
+        assign user_programn = !reboot[7];
+        always @(posedge clk_25mhz) reboot <= !btn[0] ? reboot + 1 : 0;
 
 	reg [7:0] led_reg;
 	assign led = led_reg;
