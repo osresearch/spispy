@@ -1,0 +1,49 @@
+#!/usr/bin/perl
+use warnings;
+use strict;
+use Device::SerialPort;
+
+my $dev_file = "/dev/ttyACM0";
+
+my $dev = Device::SerialPort->new($dev_file)
+	or die "$dev_file: Unable to open: $!\n";
+my $baud = 3000000; # 3 megabaud max for ttyUSB, ignored for ttyACM
+
+my $usage = <<END;
+Usage:
+  -h | --help                    This help
+  -d | --device /dev/ttyACM0     Serial port device
+  -b | --baud 3000000            Baud rate (for FTDI serial)
+
+  -r | --read file               Read RAM into file
+  -w | --write file              Write RAM from file
+  -R | --read-flash file         Read flash into file
+  -W | --write-flash file        Write flash from file
+  -a | --address 0x0             RAM/flash address to read from
+  -l | --length 0x1000           Length to read from RAM/flash
+  -z | --size 16                 Flash chip size in MiB
+  -c | --clone                   Clone the flash chip into RAM
+
+  -i | --id cf2316               Set flash chip ID in RAM
+  -I | --flash-id                Read the flash chip ID from flash
+
+  -s | --sfdp file               Write RAM SFDP from file
+  -S | --sfdp-flash file         Read flash SFDP into file
+
+  -m | --monitor                 Monitor flash access patterns
+  -e | --emulate                 Enable flash emulation mode
+  -n | --no-emulate              Turn off flash emulation mode
+
+  -t | --toctou                  Need to figure out how this works
+END
+
+$dev->baudrate($baud);
+$dev->handshake("none");
+$dev->read_char_time(5); # estimate 5 ms between bytes
+
+# send a version command
+$dev->write("!V")
+	or die "$dev_file: command failed\n";
+my $response = $dev->read(16)
+	or die "$dev_file: no response\n";
+print "Response: '$response'\n";
