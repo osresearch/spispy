@@ -1,13 +1,18 @@
 #!/usr/bin/perl
+# Interface with the spispy on a USB serial port
+# For ubuntu you need run apt install libdevice-serialport-perl
 use warnings;
 use strict;
 use Device::SerialPort;
+use Getopt::Long qw(:config no_ignore_case);
 
 my $dev_file = "/dev/ttyACM0";
-
-my $dev = Device::SerialPort->new($dev_file)
-	or die "$dev_file: Unable to open: $!\n";
 my $baud = 3000000; # 3 megabaud max for ttyUSB, ignored for ttyACM
+my $size = 0x1000000; # 16 MB default
+my $length;
+my $address = 0x0;
+my $write_file;
+my $read_file;
 
 my $usage = <<END;
 Usage:
@@ -37,9 +42,22 @@ Usage:
   -t | --toctou                  Need to figure out how this works
 END
 
+GetOptions(
+	"h|?|help"	=> sub { print $usage; exit 0 },
+	"b|baud=i"	=> \$baud,
+	"w|write=s"	=> \$write_file,
+	"r|read=s"	=> \$read_file,
+	"a|address=o"	=> \$address,
+	"l|length=o"	=> \$length,
+	"z|size=o"	=> \$size,
+) or die $usage;
+
+my $dev = Device::SerialPort->new($dev_file)
+	or die "$dev_file: Unable to open: $!\n";
+
 $dev->baudrate($baud);
 $dev->handshake("none");
-$dev->read_char_time(5); # estimate 5 ms between bytes
+$dev->read_char_time(5); # over-estimate 5 ms between bytes
 
 # send a version command
 $dev->write("!V")
@@ -47,3 +65,64 @@ $dev->write("!V")
 my $response = $dev->read(16)
 	or die "$dev_file: no response\n";
 print "Response: '$response'\n";
+
+# Make sure we're within the flash size
+die sprintf("address 0x%08x > size 0x%08x\n", $address, $size)
+	if $address > $size;
+
+if (not defined $length)
+{
+	# default to the rest of the flash
+	$length = $size - $address;
+} elsif ($length + $address > $size)
+{
+	# Fixup length to fit within size
+	warn sprintf("address 0x%08x + length 0x%08x > size 0x%08x. truncating!\n", $address, $length, $size);
+	$length = $size - $address;
+}
+	
+# read the contents first, then write
+if (defined $read_file)
+{
+	my $handle = \*STDOUT;
+	if ($read_file ne "-")
+	{
+		open $handle, ">", $read_file
+			or die "$read_file: Unable to open: $!\n";
+	}
+
+	$dev->write(pack("a2NN", "!R", $address, $length))
+		or die "$dev_file: read command failed\n";
+
+	my $len = 0;
+	while ($len < $length)
+	{
+		my $data = $dev->read($length - $len)
+			or die "$dev_file: read timeout\n";
+		print $handle $data;
+		$len += length $data;
+	}
+}
+
+if (defined $write_file)
+{
+	my $handle = \*STDIN;
+	if ($write_file ne "-")
+	{
+		open $handle, "<", $write_file
+			or die "$write_file: Unable to open: $!\n";
+	}
+
+	my $data = do { local $/; <$handle> };
+	die "$write_file: larger than flash size\n"
+		if $address + length($data) > $size;
+	# truncate if larger than length
+	$data = substr($data, 0, $length);
+
+	$dev->write(pack("a2NN", "!W", $address, $length))
+		or die "$dev_file: write failed: $!\n";
+
+	$dev->write($data);
+}
+
+__END__
