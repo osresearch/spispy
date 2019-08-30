@@ -16,6 +16,7 @@ my $address = 0x0;
 my $write_file;
 my $read_file;
 my $sfdp_file;
+my $reboot;
 my $verbose = 0;
 my $chunk = 1024;
 
@@ -26,6 +27,7 @@ Usage:
   -V | --version
   -d | --device /dev/ttyACM0     Serial port device
   -b | --baud 3000000            Baud rate (for FTDI serial)
+  -X | --reboot                  Reboot into the bootloader
 
   -r | --read file               Read RAM into file
   -w | --write file              Write RAM from file
@@ -52,6 +54,7 @@ END
 GetOptions(
 	"h|?|help"	=> sub { print $usage; exit 0 },
 	"b|baud=i"	=> \$baud,
+	"X|reboot+"	=> \$reboot,
 	"w|write=s"	=> \$write_file,
 	"r|read=s"	=> \$read_file,
 	"s|sfdp=s"	=> \$sfdp_file,
@@ -68,6 +71,16 @@ $dev->baudrate($baud);
 $dev->handshake("none");
 $dev->read_char_time(5); # over-estimate 5 ms between bytes
 $dev->purge_all();
+
+if ($reboot)
+{
+	warn "REBOOTING\n" if $verbose;
+
+	$dev->write('!$REBOOT!!')
+		for 0..999;
+
+	exit;
+}
 
 # send a version command
 $dev->write("!V")
