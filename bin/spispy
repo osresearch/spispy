@@ -1,6 +1,7 @@
 #!/usr/bin/perl
 # Interface with the spispy on a USB serial port
 # For ubuntu you need run apt install libdevice-serialport-perl
+# Not all options are currently supported
 use warnings;
 use strict;
 use Device::SerialPort;
@@ -9,11 +10,12 @@ use Getopt::Long qw(:config no_ignore_case);
 
 my $dev_file = "/dev/ttyACM0";
 my $baud = 3000000; # 3 megabaud max for ttyUSB, ignored for ttyACM
-my $size = 0x1000000; # 16 MB default
+my $size = 0x1000000; # 16 MB default, except for sfdp
 my $length;
 my $address = 0x0;
 my $write_file;
 my $read_file;
+my $sfdp_file;
 my $verbose = 0;
 my $chunk = 1024;
 
@@ -21,30 +23,30 @@ my $usage = <<END;
 Usage:
   -h | --help
   -v | --verbose
-  -V | --version              
+  -V | --version
   -d | --device /dev/ttyACM0     Serial port device
   -b | --baud 3000000            Baud rate (for FTDI serial)
 
   -r | --read file               Read RAM into file
   -w | --write file              Write RAM from file
-  -R | --read-flash file         Read flash into file
-  -W | --write-flash file        Write flash from file
+  -R | --read-flash file         Read flash into file (not yet)
+  -W | --write-flash file        Write flash from file (not yet)
   -a | --address 0x0             RAM/flash address to read from
   -l | --length 0x1000           Length to read from RAM/flash
   -z | --size 16                 Flash chip size in MiB
-  -c | --clone                   Clone the flash chip into RAM
+  -c | --clone                   Clone the flash chip into RAM (not yet)
 
-  -i | --id cf2316               Set flash chip ID in RAM
-  -I | --flash-id                Read the flash chip ID from flash
+  -i | --id cf2316               Set flash chip ID in RAM (not yet)
+  -I | --flash-id                Read the flash chip ID from flash (not yet)
 
   -s | --sfdp file               Write RAM SFDP from file
   -S | --sfdp-flash file         Read flash SFDP into file
 
-  -m | --monitor                 Monitor flash access patterns
-  -e | --emulate                 Enable flash emulation mode
-  -n | --no-emulate              Turn off flash emulation mode
+  -m | --monitor                 Monitor flash access patterns (not yet)
+  -e | --emulate                 Enable flash emulation mode (not yet)
+  -n | --no-emulate              Turn off flash emulation mode (not yet)
 
-  -t | --toctou                  Need to figure out how this works
+  -t | --toctou                  Need to figure out how this works (not yet)
 END
 
 GetOptions(
@@ -52,6 +54,7 @@ GetOptions(
 	"b|baud=i"	=> \$baud,
 	"w|write=s"	=> \$write_file,
 	"r|read=s"	=> \$read_file,
+	"s|sfdp=s"	=> \$sfdp_file,
 	"a|address=o"	=> \$address,
 	"l|length=o"	=> \$length,
 	"z|size=o"	=> \$size,
@@ -87,7 +90,18 @@ if (not defined $length)
 	warn sprintf("address 0x%08x + length 0x%08x > size 0x%08x. truncating!\n", $address, $length, $size);
 	$length = $size - $address;
 }
-	
+
+# for sfdp fake it for now using the offset in high memory
+if (defined $sfdp_file)
+{
+	die "Only one of --sfdp and --read/--write at a time\n"
+		if defined $write_file or defined $read_file;
+
+	$write_file = $sfdp_file;
+	$address = 0x1000000;
+	$size = 0x1001000; # max is a few kb
+}
+
 # read the contents first, then write
 if (defined $read_file)
 {
@@ -125,8 +139,10 @@ if (defined $write_file)
 	}
 
 	my $data = do { local $/; <$handle> };
-	die "$write_file: larger than flash size\n"
+	die sprintf("%s: address %x + length %x larger than flash size %x\n",
+		$write_file, $address, length($data), $size)
 		if $address + length($data) > $size;
+
 	if (length $data < $length)
 	{
 		# set length if it is shorter than we're writing
