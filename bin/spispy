@@ -4,6 +4,7 @@
 use warnings;
 use strict;
 use Device::SerialPort;
+use Time::HiRes;
 use Getopt::Long qw(:config no_ignore_case);
 
 my $dev_file = "/dev/ttyACM0";
@@ -13,10 +14,14 @@ my $length;
 my $address = 0x0;
 my $write_file;
 my $read_file;
+my $verbose = 0;
+my $chunk = 1024;
 
 my $usage = <<END;
 Usage:
-  -h | --help                    This help
+  -h | --help
+  -v | --verbose
+  -V | --version              
   -d | --device /dev/ttyACM0     Serial port device
   -b | --baud 3000000            Baud rate (for FTDI serial)
 
@@ -50,6 +55,7 @@ GetOptions(
 	"a|address=o"	=> \$address,
 	"l|length=o"	=> \$length,
 	"z|size=o"	=> \$size,
+	"v|verbose+"	=> \$verbose,
 ) or die $usage;
 
 my $dev = Device::SerialPort->new($dev_file)
@@ -58,13 +64,14 @@ my $dev = Device::SerialPort->new($dev_file)
 $dev->baudrate($baud);
 $dev->handshake("none");
 $dev->read_char_time(5); # over-estimate 5 ms between bytes
+$dev->purge_all();
 
 # send a version command
 $dev->write("!V")
 	or die "$dev_file: command failed\n";
 my $response = $dev->read(16)
 	or die "$dev_file: no response\n";
-print "Response: '$response'\n";
+print STDERR "Version: '$response'\n" if $verbose;
 
 # Make sure we're within the flash size
 die sprintf("address 0x%08x > size 0x%08x\n", $address, $size)
@@ -91,17 +98,21 @@ if (defined $read_file)
 			or die "$read_file: Unable to open: $!\n";
 	}
 
-	$dev->write(pack("a2NN", "!R", $address, $length))
+	$dev->write(pack("a2NN", "!R", $length, $address))
 		or die "$dev_file: read command failed\n";
 
-	my $len = 0;
-	while ($len < $length)
+	for(my $offset = 0 ; $offset < $length ; )
 	{
-		my $data = $dev->read($length - $len)
+		my $data = $dev->read($chunk)
 			or die "$dev_file: read timeout\n";
+
+		progress($offset);
+
 		print $handle $data;
-		$len += length $data;
+		$offset += length $data;
 	}
+
+	progress_done();
 }
 
 if (defined $write_file)
@@ -116,13 +127,62 @@ if (defined $write_file)
 	my $data = do { local $/; <$handle> };
 	die "$write_file: larger than flash size\n"
 		if $address + length($data) > $size;
-	# truncate if larger than length
-	$data = substr($data, 0, $length);
+	if (length $data < $length)
+	{
+		# set length if it is shorter than we're writing
+		$length = length $data;
+		warn sprintf("setting write length to 0x%x\n", $length)
+			if $verbose;
+	} elsif (length $data > $length)
+	{
+		# truncate if larger than length
+		$data = substr($data, 0, $length);
+		warn sprintf("truncating write length to 0x%x\n", $length)
+			if $verbose;
+	}
 
-	$dev->write(pack("a2NN", "!W", $address, $length))
-		or die "$dev_file: write failed: $!\n";
+	$dev->write(pack("a2NN", "!W", $length, $address))
+		or die "$dev_file: write command failed: $!\n";
 
-	$dev->write($data);
+	# spit into small chunks
+	for(my $offset = 0 ; $offset < $length ; )
+	{
+		progress($offset);
+
+		# ensure that we wait until the serial port is ready
+		sleep(0.1) until $dev->write_drain;
+
+		my $len = $dev->write(substr($data, $offset, $chunk))
+			or die "$dev_file: write data failed: $!\n";
+		$offset += $len;
+	}
+	progress_done();
+
+	# wait for the write ack
+	my $ack = $dev->read(1)
+		or die "$dev_file: write ack timeout\n";
+	die "$dev_file: write ack '$ack' != expected 'w'\n"
+		if $ack ne "w";
+}
+
+
+sub progress
+{
+	my $offset = shift;
+	return unless $verbose;
+
+	if (($offset & 0xFFFFF) == 0)
+	{
+		printf STDERR "\n%08x ", $offset;
+	} elsif (($offset & 0x7FFF) == 0)
+	{
+		printf STDERR ".";
+	}
+}
+
+sub progress_done
+{
+	print STDERR "\n" if $verbose;
 }
 
 __END__
