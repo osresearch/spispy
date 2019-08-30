@@ -16,6 +16,7 @@ module user_command_parser(
 	output reg [7:0] uart_txd,
 	output reg uart_txd_strobe,
 	input uart_txd_ready,
+	output reboot,
 
 	// interface to the sdram
 	output reg [ADDR_BITS-1:0] sd_addr,
@@ -30,6 +31,7 @@ module user_command_parser(
 	parameter ADDR_BITS = 32;
 
 	reg [8:0] counter;
+	reg reboot = 0;
 
 	reg wr_pending;
 	reg rd_pending;
@@ -51,6 +53,7 @@ module user_command_parser(
 		MODE_A0		= 6'b010100,
 		MODE_RD		= 6'b010011,
 		MODE_WR		= 6'b001100,
+		MODE_REBOOT	= 6'b111101,
 		MODE_VERSION	= 6'b111110,
 		MODE_INVALID	= 6'b111111;
 
@@ -58,6 +61,7 @@ module user_command_parser(
 		CMD_HDR		= "!",
 		CMD_RD		= "R",
 		CMD_WR		= "W",
+		CMD_REBOOT	= "$",
 		CMD_VERSION	= "V",
 		CMD_INVALID	= 8'hff;
 
@@ -89,6 +93,7 @@ module user_command_parser(
 		counter <= counter + 1;
 
 		if (reset) begin
+			reboot <= 0;
 			mode <= MODE_WAIT;
 			msg_len <= 0;
 			wr_pending <= 0;
@@ -98,6 +103,7 @@ module user_command_parser(
 		if (fifo_rxd_available && !processing)
 		case(mode)
 		MODE_WAIT: begin
+			reboot <= 0;
 			sd_we <= 0;
 			rd_pending <= 0;
 			wr_pending <= 0;
@@ -163,6 +169,10 @@ module user_command_parser(
 				mode <= MODE_VERSION;
 				msg_len <= 8;
 			end
+			CMD_REBOOT: begin
+				mode <= MODE_L3;
+				cmd_mode <= MODE_REBOOT;
+			end
 			default:
 				mode <= MODE_INVALID;
 			endcase
@@ -213,6 +223,19 @@ module user_command_parser(
 			uart_txd <= "?";
 			uart_txd_strobe <= 1;
 		end else
+		if (mode == MODE_REBOOT) begin
+			if (msg_len == "REBO" && sd_addr == "OT!!")
+			begin
+				reboot <= 1;
+				uart_txd <= "$";
+				uart_txd_strobe <= 1;
+			end else begin
+				mode <= MODE_WAIT;
+				uart_txd <= "?";
+				uart_txd_strobe <= 1;
+			end
+		end else
+
 		if (mode == MODE_RD) begin
 			if (msg_len == 0) begin
 				mode <= MODE_WAIT;
@@ -277,7 +300,7 @@ module user_command_parser(
 			// nothing to do this clock cycle.  relax!
 		end
 	end
-	
+
 endmodule
 
 `endif

@@ -59,10 +59,14 @@ module top(
 	assign wifi_gpio0 = 1;
 
         // button 0 is the power and is negative logic
-	// hold it in to reboot the board to the bootloader
+	// hold it in to reboot the board to the bootloader.
+	// however this causes problems if the RV3 resistor is removed,
+	// so we're using button 6 ("right") instead, which is normal logic
+	// user_programn is inverted
+	wire user_reboot;
         reg [7:0] reboot;
-        assign user_programn = !reboot[7];
-        always @(posedge clk_25mhz) reboot <= !btn[0] ? reboot + 1 : 0;
+        assign user_programn = !(reboot[7] || user_reboot);
+        always @(posedge clk_25mhz) reboot <= btn[6] ? reboot + 1 : 0;
 
 	reg [7:0] led_reg;
 	assign led = led_reg;
@@ -450,6 +454,8 @@ sdram_ctrl0 (
 	user_command_parser user(
 		.clk(clk),
 		.reset(reset),
+		.reboot(user_reboot),
+
 		// serial port interface
 		.uart_rxd(uart_rxd),
 		.uart_rxd_strobe(uart_rxd_strobe),
