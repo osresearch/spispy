@@ -1,0 +1,228 @@
+#!/usr/bin/perl
+# Interface with the spispy on a USB serial port
+# For ubuntu you need run apt install libdevice-serialport-perl
+# Not all options are currently supported
+use warnings;
+use strict;
+use Device::SerialPort;
+use Time::HiRes;
+use Getopt::Long qw(:config no_ignore_case);
+
+my $dev_file = "/dev/ttyACM0";
+my $baud = 3000000; # 3 megabaud max for ttyUSB, ignored for ttyACM
+my $size = 0x1000000; # 16 MB default, except for sfdp
+my $length;
+my $address = 0x0;
+my $write_file;
+my $read_file;
+my $sfdp_file;
+my $reboot;
+my $verbose = 0;
+my $chunk = 1024;
+my $monitor = 0;
+
+my $usage = <<END;
+Usage:
+  -h | --help
+  -v | --verbose
+  -V | --version
+  -d | --device /dev/ttyACM0     Serial port device
+  -b | --baud 3000000            Baud rate (for FTDI serial)
+  -X | --reboot                  Reboot into the bootloader
+
+  -r | --read file               Read RAM into file
+  -w | --write file              Write RAM from file
+  -R | --read-flash file         Read flash into file (not yet)
+  -W | --write-flash file        Write flash from file (not yet)
+  -a | --address 0x0             RAM/flash address to read from
+  -l | --length 0x1000           Length to read from RAM/flash
+  -z | --size 16                 Flash chip size in MiB
+  -c | --clone                   Clone the flash chip into RAM (not yet)
+
+  -i | --id cf2316               Set flash chip ID in RAM (not yet)
+  -I | --flash-id                Read the flash chip ID from flash (not yet)
+
+  -s | --sfdp file               Write RAM SFDP from file
+  -S | --sfdp-flash file         Read flash SFDP into file
+
+  -m | --monitor                 Monitor flash access patterns (not yet)
+  -e | --emulate                 Enable flash emulation mode (not yet)
+  -n | --no-emulate              Turn off flash emulation mode (not yet)
+
+  -t | --toctou                  Need to figure out how this works (not yet)
+END
+
+GetOptions(
+	"h|?|help"	=> sub { print $usage; exit 0 },
+	"b|baud=i"	=> \$baud,
+	"X|reboot+"	=> \$reboot,
+	"w|write=s"	=> \$write_file,
+	"r|read=s"	=> \$read_file,
+	"s|sfdp=s"	=> \$sfdp_file,
+	"a|address=o"	=> \$address,
+	"l|length=o"	=> \$length,
+	"z|size=o"	=> \$size,
+	"m|monitor+"	=> \$monitor,
+	"v|verbose+"	=> \$verbose,
+) or die $usage;
+
+my $dev = Device::SerialPort->new($dev_file)
+	or die "$dev_file: Unable to open: $!\n";
+
+$dev->baudrate($baud);
+$dev->handshake("none");
+$dev->read_char_time(5); # over-estimate 5 ms between bytes
+$dev->purge_all();
+
+if ($reboot)
+{
+	warn "REBOOTING\n" if $verbose;
+
+	$dev->write('!$REBOOT!!')
+		for 0..999;
+
+	exit;
+}
+
+# send a version command
+$dev->write("!V")
+	or die "$dev_file: command failed\n";
+my $response = $dev->read(16)
+	or die "$dev_file: no response\n";
+print STDERR "Version: '$response'\n" if $verbose;
+
+while ($monitor)
+{
+	$|++; # unbuffer stdout
+	my $response = $dev->read(4)
+		or next;
+	print $response;
+}
+
+
+# Make sure we're within the flash size
+die sprintf("address 0x%08x > size 0x%08x\n", $address, $size)
+	if $address > $size;
+
+if (not defined $length)
+{
+	# default to the rest of the flash
+	$length = $size - $address;
+} elsif ($length + $address > $size)
+{
+	# Fixup length to fit within size
+	warn sprintf("address 0x%08x + length 0x%08x > size 0x%08x. truncating!\n", $address, $length, $size);
+	$length = $size - $address;
+}
+
+# for sfdp fake it for now using the offset in high memory
+if (defined $sfdp_file)
+{
+	die "Only one of --sfdp and --read/--write at a time\n"
+		if defined $write_file or defined $read_file;
+
+	$write_file = $sfdp_file;
+	$address = 0x1000000;
+	$size = 0x1001000; # max is a few kb
+}
+
+# read the contents first, then write
+if (defined $read_file)
+{
+	my $handle = \*STDOUT;
+	if ($read_file ne "-")
+	{
+		open $handle, ">", $read_file
+			or die "$read_file: Unable to open: $!\n";
+	}
+
+	$dev->write(pack("a2NN", "!R", $length, $address))
+		or die "$dev_file: read command failed\n";
+
+	for(my $offset = 0 ; $offset < $length ; )
+	{
+		my $data = $dev->read($chunk)
+			or die "$dev_file: read timeout\n";
+
+		progress($offset);
+
+		print $handle $data;
+		$offset += length $data;
+	}
+
+	progress_done();
+}
+
+if (defined $write_file)
+{
+	my $handle = \*STDIN;
+	if ($write_file ne "-")
+	{
+		open $handle, "<", $write_file
+			or die "$write_file: Unable to open: $!\n";
+	}
+
+	my $data = do { local $/; <$handle> };
+	die sprintf("%s: address %x + length %x larger than flash size %x\n",
+		$write_file, $address, length($data), $size)
+		if $address + length($data) > $size;
+
+	if (length $data < $length)
+	{
+		# set length if it is shorter than we're writing
+		$length = length $data;
+		warn sprintf("setting write length to 0x%x\n", $length)
+			if $verbose;
+	} elsif (length $data > $length)
+	{
+		# truncate if larger than length
+		$data = substr($data, 0, $length);
+		warn sprintf("truncating write length to 0x%x\n", $length)
+			if $verbose;
+	}
+
+	$dev->write(pack("a2NN", "!W", $length, $address))
+		or die "$dev_file: write command failed: $!\n";
+
+	# spit into small chunks
+	for(my $offset = 0 ; $offset < $length ; )
+	{
+		progress($offset);
+
+		# ensure that we wait until the serial port is ready
+		sleep(0.1) until $dev->write_drain;
+
+		my $len = $dev->write(substr($data, $offset, $chunk))
+			or die "$dev_file: write data failed: $!\n";
+		$offset += $len;
+	}
+	progress_done();
+
+	# wait for the write ack
+	my $ack = $dev->read(1)
+		or die "$dev_file: write ack timeout\n";
+	die "$dev_file: write ack '$ack' != expected 'w'\n"
+		if $ack ne "w";
+}
+
+
+sub progress
+{
+	my $offset = shift;
+	return unless $verbose;
+
+	if (($offset & 0xFFFFF) == 0)
+	{
+		printf STDERR "\n%08x ", $offset;
+	} elsif (($offset & 0x7FFF) == 0)
+	{
+		printf STDERR ".";
+	}
+}
+
+sub progress_done
+{
+	print STDERR "\n" if $verbose;
+}
+
+__END__
