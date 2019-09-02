@@ -19,6 +19,7 @@ my $sfdp_file;
 my $reboot;
 my $verbose = 0;
 my $chunk = 1024;
+my $monitor = 0;
 
 my $usage = <<END;
 Usage:
@@ -61,6 +62,7 @@ GetOptions(
 	"a|address=o"	=> \$address,
 	"l|length=o"	=> \$length,
 	"z|size=o"	=> \$size,
+	"m|monitor+"	=> \$monitor,
 	"v|verbose+"	=> \$verbose,
 ) or die $usage;
 
@@ -88,6 +90,15 @@ $dev->write("!V")
 my $response = $dev->read(16)
 	or die "$dev_file: no response\n";
 print STDERR "Version: '$response'\n" if $verbose;
+
+while ($monitor)
+{
+	$|++; # unbuffer stdout
+	my $response = $dev->read(4)
+		or next;
+	print $response;
+}
+
 
 # Make sure we're within the flash size
 die sprintf("address 0x%08x > size 0x%08x\n", $address, $size)
