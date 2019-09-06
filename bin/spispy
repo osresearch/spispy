@@ -18,6 +18,8 @@ my $read_file;
 my $sfdp_file;
 my $reboot;
 my $verbose = 0;
+my $force = 0;
+my $logic = 0;
 my $chunk = 1024;
 my $monitor = 0;
 
@@ -64,6 +66,8 @@ GetOptions(
 	"z|size=o"	=> \$size,
 	"m|monitor+"	=> \$monitor,
 	"v|verbose+"	=> \$verbose,
+	"F|force+"	=> \$force,
+	"L|logic+"	=> \$logic,
 ) or die $usage;
 
 my $dev = Device::SerialPort->new($dev_file)
@@ -84,12 +88,56 @@ if ($reboot)
 	exit;
 }
 
+	my $time_avg = 0;
+	my $bits = 0;
+	my $miso = '';
+	my $mosi = '';
+
+while ($logic)
+{
+	$|++; # unbuffer stdout
+	my $response = $dev->read(32)
+		or next;
+
+	for(my $i = 0 ; $i < length($response) ; $i++)
+	{
+		my $data = ord(substr($response, $i, 1));
+		#printf "%02x '%s'", $data, $miso;
+
+		my $time = $data >> 2;
+		if ($time == 0)
+		{
+			# new command
+			if ($bits)
+			{
+				printf "%s %d\n%s %.1f\n",
+				unpack("H*", pack("B*", $miso)),
+				$bits,
+				unpack("H*", pack("B*", $mosi)),
+				$time_avg ? 132.00 * $bits / $time_avg : 0,
+			}
+			$time_avg = 0;
+			$bits = 0;
+			$miso = '';
+			$mosi = '';
+		}
+
+		$time_avg += $time;
+		$bits++;
+		$miso .= (($data >> 1) & 1) ? '1' : '0';
+		$mosi .= (($data >> 0) & 1) ? '1' : '0';
+	}
+}
+
 # send a version command
-$dev->write("!V")
-	or die "$dev_file: command failed\n";
-my $response = $dev->read(16)
-	or die "$dev_file: no response\n";
-print STDERR "Version: '$response'\n" if $verbose;
+unless($force)
+{
+	$dev->write("!V")
+		or die "$dev_file: command failed\n";
+	my $response = $dev->read(16)
+		or die "$dev_file: no response\n";
+	print STDERR "Version: '$response'\n" if $verbose;
+}
 
 while ($monitor)
 {
