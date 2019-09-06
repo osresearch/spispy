@@ -2,7 +2,8 @@
  * ECP5 flash emulator using the ULX3S board
  *
  * Wiring is on the left headers.
- * Desolder the RV3 resistor so that the flash chip voltage is auto-selecting
+ * Desolder the RV3 resistor so that the flash chip voltage is auto-selecting.
+ * The LEDs are powered from this same bank, so they will not illuminate.
  */
 `default_nettype none
 `include "uart.v"
@@ -50,7 +51,7 @@ module top(
 );
 	parameter MONITOR_MODE = 0;
 	wire ENABLE_EMULATION = 0;
-	wire ENABLE_TOCTOU = 1; // if there is an existing flash that we're modifying or overruling
+	wire ENABLE_TOCTOU = 0; // if there is an existing flash that we're modifying or overruling
 	parameter LOG_ALL_BYTES = 1;
 	parameter VERBOSE_LOGGING = 0;
 `define USB_SERIAL
@@ -82,7 +83,8 @@ module top(
 	wire clk_48;
 	pll_48 pll_48_i(clk_132, clk_48);
 
-	// SPI bus is on the J1 positive pins
+	// SPI bus is on the left-side headers, positive pins
+	// these have the voltage selected by the RV3 resistor and header
 	wire spi_cs_pin = gp[7];
 	wire spi_clk_pin = gp[8];
 	wire spi_mosi_pin = gp[9];
@@ -424,10 +426,10 @@ sdram_ctrl0 (
 	.dqm_o		(sdram_dqm),
 	.dq_oe_o	(sdram_dq_oe),
 	.cke_o		(sdram_cke),
-	.sdram_clk	(clk), // sdram_clk is the output to the chip
-	.sdram_rst	(sdram_reset),
 
 	// logical interface
+	.sdram_clk	(clk), // sdram state machine, not physical clock
+	.sdram_rst	(sdram_reset),
 	.idle_o		(sd_idle),
 	.adr_i		(sd_addr),
 	.dat_i		(sd_wr_data),
@@ -609,3 +611,4 @@ sdram_ctrl0 (
 		end
 	end
 endmodule
+
