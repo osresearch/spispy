@@ -82,6 +82,7 @@ module spi_flash(
 	// such as https://www.winbond.com/resource-files/w25q256fv_revg1_120214_qpi_website_rev_g.pdf
 	localparam SPI_CMD_PP3	= 8'h02;
 	localparam SPI_CMD_READ	= 8'h03;
+	localparam SPI_CMD_FASTREAD = 8'h0b;
 	localparam SPI_CMD_WRDS	= 8'h04;
 	localparam SPI_CMD_RDSR	= 8'h05;
 	localparam SPI_CMD_WREN	= 8'h06;
@@ -218,6 +219,16 @@ module spi_flash(
 				spi_rd_cmd <= 1;
 				ram_addr[31:24] <= 0;
 				spi_rd_dummy <= 0;
+				spi_mode <= MODE_READ;
+			end
+			SPI_CMD_FASTREAD: begin
+				// will need to get the RAM
+				spi_critical <= 1;
+				spi_output_enable <= 1;
+				ram_refresh_inhibit <= 1;
+				spi_rd_cmd <= 1;
+				ram_addr[31:24] <= 0;
+				spi_rd_dummy <= 1;
 				spi_mode <= MODE_READ;
 			end
 			SPI_CMD_SFDP: begin
