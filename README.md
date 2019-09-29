@@ -66,17 +66,23 @@ If the board has a "Dediprog" or programming header it might be possible to atta
 directly to the header and also override the chip select pin, although more
 testing is necessary.
 
-*IMPORTANT NOTE* the system currently uses 3.3v signalling for the SPI bus.
+*IMPORTANT NOTE* the system defaults to using 3.3v signalling for the SPI bus.
 If you have more modern system, it _might_ use 1.8v and driving it at the higher
-voltage can cause problems.  We need to test this and figure out if alternate
-output voltages can be selected on the pins. ([issue #10](https://github.com/osresearch/spispy/issues/10))
+voltage can cause problems.  It is possible to remove the RV3 resistor from the
+board and provide power to the FPGA GPIO bank through the + pin on the left side
+connector (J1, pin labeled "2.5/3.3V"); you can connect this pin to the Vcc pin
+on the SPI flash, which will allow the FPGA to output the same voltage.
+More details are in [issue #10](https://github.com/osresearch/spispy/issues/10).
 
 # Usage
 ![spispy connected to a Supermicro X11SSH-F mainboard](images/mainboard.jpg)
 
-If using the spispy with a clip you can leave the `Vcc` pin disconnected.
+If using the spispy with a 3.3V chip and a clip you can leave the `Vcc` pin
+disconnected; otherwise be sure to see the important note above about
+hardware changes to support lower voltage flash chips.
 Be sure to set the `TOCTOU` flag in the `spispy.v` file so that the spispy will
-prevent the real flash from responding.
+prevent the real flash from responding (or use the `#RESET` pin; need to
+document when this works).
 
 When you plug in the spispy it should show up as a USB-CDC-ACM device with
 a device file like `/dev/ttyACM0`.  You might have to start `minicom` or some
