@@ -45,15 +45,30 @@ state machine needs to be redone ([issue #17](https://github.com/osresearch/spis
 
 ![8-SOIC chip clip and !CS pin mod](images/clip.jpg)
 
-Typical 8-SOIC and 8-DIP flash chips:
+Typical 8-SOIC and 8-DIP flash chips (`!RST` and Vcc are optional):
 
 ```
-            +------+
-    !CS  ---| o    |----  +V
-     SO  ---|      |---- !RST
-    !WP  ---|      |----  SCK
-    GND  ---|      |----  SI
-            +------+
+                    +------+
+   J1 7     !CS 1---| o    |---8  Vcc   J1 + (for low voltage)
+   J1 10     SO 2---|      |---7 !RST   J1 11 (optional)
+            !WP 3---|      |---6  SCK   J1 8
+   J1 GND   GND 4---|      |---5  SI    J1 9
+                    +------+
+```
+
+Typical 16-SOIC flash chips (`!RST` and Vcc are optional):
+
+```
+                   +--------+
+           IO3 1---| o      |--16 CLK      J1 8
+   J1 +    Vcc 2---|        |--15 SI/IO1   J1 9
+   J1 11  !RST 3---|        |--14
+               4---|        |--13
+               5---|        |--12
+               6---|        |--11
+   J1 7    !CS 7---|        |--10 GND      J1 GND
+   J1 10    SO 8---|        |---9 !WP/IO2
+                   +--------+
 ```
 
 If there is a series resistor on the `!CS` pin, it might be possible to clip
