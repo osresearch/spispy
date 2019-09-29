@@ -18,14 +18,18 @@ my $read_file;
 my $sfdp_file;
 my $reboot;
 my $verbose = 0;
-my $chunk = 1024;
+my $force = 0;
+my $logic = 0;
+my $chunk = 4096;
 my $monitor = 0;
+my $raw = 0;
 
 my $usage = <<END;
 Usage:
   -h | --help
   -v | --verbose
   -V | --version
+  -F | --force                   Don't wait for version id
   -d | --device /dev/ttyACM0     Serial port device
   -b | --baud 3000000            Baud rate (for FTDI serial)
   -X | --reboot                  Reboot into the bootloader
@@ -45,7 +49,8 @@ Usage:
   -s | --sfdp file               Write RAM SFDP from file
   -S | --sfdp-flash file         Read flash SFDP into file
 
-  -m | --monitor                 Monitor flash access patterns (not yet)
+  -m | --monitor                 Monitor flash access patterns
+  -x | --raw                     Dump raw flash commands
   -e | --emulate                 Enable flash emulation mode (not yet)
   -n | --no-emulate              Turn off flash emulation mode (not yet)
 
@@ -63,7 +68,9 @@ GetOptions(
 	"l|length=o"	=> \$length,
 	"z|size=o"	=> \$size,
 	"m|monitor+"	=> \$monitor,
+	"x|raw+"	=> \$raw,
 	"v|verbose+"	=> \$verbose,
+	"F|force+"	=> \$force,
 ) or die $usage;
 
 my $dev = Device::SerialPort->new($dev_file)
@@ -71,7 +78,7 @@ my $dev = Device::SerialPort->new($dev_file)
 
 $dev->baudrate($baud);
 $dev->handshake("none");
-$dev->read_char_time(5); # over-estimate 5 ms between bytes
+$dev->read_char_time(50); # over-estimate 5 ms between bytes
 $dev->purge_all();
 
 if ($reboot)
@@ -85,20 +92,15 @@ if ($reboot)
 }
 
 # send a version command
-$dev->write("!V")
-	or die "$dev_file: command failed\n";
-my $response = $dev->read(16)
-	or die "$dev_file: no response\n";
-print STDERR "Version: '$response'\n" if $verbose;
-
-while ($monitor)
+unless($force)
 {
-	$|++; # unbuffer stdout
-	my $response = $dev->read(4)
-		or next;
-	print $response;
+	$dev->write("!V")
+		or die "$dev_file: command failed\n";
+	my $response = $dev->read(16)
+		or die "$dev_file: no response\n";
+	print STDERR "Version: '$response'\n" if $verbose;
+	die unless $response eq '11111111';
 }
-
 
 # Make sure we're within the flash size
 die sprintf("address 0x%08x > size 0x%08x\n", $address, $size)
@@ -204,6 +206,43 @@ if (defined $write_file)
 	die "$dev_file: write ack '$ack' != expected 'w'\n"
 		if $ack ne "w";
 }
+
+
+# if we're in monitor mode, go into after the write has finished
+my %read_cmds = (
+	0x03	=> "RD",
+	0x0B	=> "FR",
+	0x3B	=> "DR",
+);
+
+warn "Monitoring...\n" if $monitor;
+
+while ($monitor)
+{
+	$|++; # unbuffer stdout
+	my $response = $dev->read(4)
+		or next;
+
+	if ($raw)
+	{
+		print $response;
+		next;
+	}
+
+	# try to parse a read command
+	my $word = unpack("N", $response);
+	my $cmd = ($word >> 24) & 0xFF;
+	if (exists $read_cmds{$cmd})
+	{
+		printf "%s %06x\n", $read_cmds{$cmd}, $word & 0xFFFFFF;
+		next;
+	}
+
+	# read a byte and throw it away until we resync
+	printf "?? %08x\n", $word;
+	$dev->read(1);
+}
+
 
 
 sub progress
