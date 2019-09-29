@@ -487,7 +487,7 @@ module spi_flash(
 			// increment the spi_len for logging,
 			// leave the log_addr alone so it shows the start address
 			log_len <= log_len + 1;
-			ram_addr[7:0] <= ram_addr[7:0] + 8'h01;
+			ram_addr[23:0] <= ram_addr[23:0] + 1'h1;
 
 			if (spi_mode == MODE_WRITE) begin
 				// write this into the flash
