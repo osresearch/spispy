@@ -50,7 +50,7 @@ module top(
 	input [6:0] btn,
 );
 	parameter MONITOR_MODE = 0;
-	wire ENABLE_EMULATION = 0;
+	wire ENABLE_EMULATION = 1;
 	wire ENABLE_TOCTOU = 0; // if there is an existing flash that we're modifying or overruling
 	parameter LOG_ALL_BYTES = 1;
 	parameter VERBOSE_LOGGING = 0;
@@ -89,6 +89,7 @@ module top(
 	wire spi_clk_pin = gp[8];
 	wire spi_mosi_pin = gp[9];
 	wire spi_miso_pin = gp[10];
+	wire spi_rst_pin = gp[11]; // for holding the real chip in reset
 	wire spi_cs_out_pin = gp[16]; // for toctou on a flash without pullup
 
 	assign gn[15] = spi_rx_cmd && spi_rx_data != 8'h03;
@@ -114,6 +115,8 @@ module top(
 	wire spi_mosi_in;
 	wire spi_clk_in;
 	wire spi_cs_in;
+	wire spi_rst_in; // perhaps when we're doing quad-spi we'll need it
+	wire spi_rst_out = 0; // until then always assert reset on the external flash
 
 	wire [7:0] spi_rx_data;
 	wire spi_rx_cmd;
@@ -141,22 +144,26 @@ module top(
 		.B(spi_cs_out_pin),
 		.I(1), // never select the other flash
 	);
+	TRELLIS_IO #(.DIR("OUTPUT")) spi_rst_out_buf(
+		.B(spi_rst_pin),
+		.I(spi_rst_out),
+	);
 `else
 	TRELLIS_IO #(.DIR("INPUT")) spi_cs_buf(
-		.T(!spi_cs_enable),
 		.B(spi_cs_pin),
-		.I(1), // always high output for TOCTOU, 
 		.O(spi_cs_in),
 	);
 	TRELLIS_IO #(.DIR("INPUT")) spi_miso_buf(
-		.T(!spi_miso_enable),
 		.B(spi_miso_pin),
-		.I(spi_miso_out),
 		.O(spi_miso_in),
 	);
 	TRELLIS_IO #(.DIR("OUTPUT")) spi_cs_out_buf(
 		.B(spi_cs_out_pin),
 		.I(spi_cs_in), // copy the input pin to the output
+	);
+	TRELLIS_IO #(.DIR("INPUT")) spi_rst_out_buf(
+		.B(spi_rst_pin),
+		.O(spi_rst_in),
 	);
 `endif
 	TRELLIS_IO #(.DIR("INPUT")) spi_mosi_buf(
