@@ -89,7 +89,7 @@ module usb_serial_ep (
   // if we're allowed to send a byte and there is data in the fifo, drain it
   wire fifo_read_strobe = fifo_data_available && byte_in_xfr_ready && (bytes_remaining != 0);
 
-  fifo #(.NUM(512), .FREESPACE(16)) fifo_i(
+  fifo #(.NUM(65536), .FREESPACE(16)) fifo_i(
 	.clk(clk),
 	.reset(reset),
 	// read from the rest of the FPGA
