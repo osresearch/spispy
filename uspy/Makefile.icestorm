@@ -1,0 +1,81 @@
+DEVICE-upduino ?= up5k
+FOOTPRINT-upduino ?= sg48
+PIN_SRC-upduino ?= upduino_v2.pcf
+
+DEVICE-icebreaker ?= up5k
+FOOTPRINT-icebreaker ?= sg48
+PIN_SRC-icebreaker ?= icebreaker.pcf
+
+
+DEVICE-tinyfpga := lp8k
+FOOTPRINT-tinyfpga := cm81
+PIN_SRC-tinyfpga := tinyfpga-bx.pcf
+
+DEVICE-tomu := up5k
+FOOTPRINT-tomu := uwg30
+PIN_SRC-tomu := tomu.pcf
+
+USB_DEV ?= 1-1:1.0
+BOARD ?= upduino
+DEVICE := $(DEVICE-$(BOARD))
+FOOTPRINT := $(FOOTPRINT-$(BOARD))
+PIN_SRC := $(PIN_SRC-$(BOARD))
+
+
+PNR ?= $(ICEPATH)nextpnr-ice40
+.SECONDARY:
+
+%.flash: %.bin
+	$(ICEPATH)iceprog -e 128 # Force a reset
+	$(ICEPATH)iceprog $<
+	echo $(USB_DEV) | tee /sys/bus/usb/drivers/ftdi_sio/bind
+
+%.bin: %.asc
+	$(ICEPATH)icepack $< $@
+
+%.json: %.v
+	$(ICEPATH)yosys \
+		-q \
+		-p 'read_verilog $<' \
+		-p 'synth_ice40 -top top -json $@' \
+		-E .$(basename $@).d \
+
+%.asc: $(PIN_SRC) %.json
+	$(PNR) \
+		--$(DEVICE) \
+		--package $(FOOTPRINT) \
+		--asc $@ \
+		--pcf $(PIN_SRC) \
+		--json $(basename $@).json \
+		--timing-allow-fail \
+
+%.gui: %.json
+	$(PNR) --gui --$(DEVICE) --pcf $(PIN_SRC) --json $<
+
+%.bin: %.asc
+	$(ICEPATH)icepack $^ $@
+
+# Generate a desired MHz pll
+pll_%.v:
+	$(ICEPATH)icepll \
+		-i 48 \
+		-o $(subst pll_,,$(basename $@)) \
+		-m \
+		-n $(basename $@) \
+		-f $@
+
+
+define make-test =
+$1: $1.vvp
+	vvp $$<
+endef
+
+test: $(TEST-y)
+$(foreach t,$(TEST-y),$(eval $(call make-test,$t)))
+%.vvp:
+	iverilog -o $@ -s $(basename $@) $^
+
+clean:
+	$(RM) *.blif *.asc *.bin *.json .*.d
+
+-include .*.d

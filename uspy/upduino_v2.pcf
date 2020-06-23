@@ -1,0 +1,46 @@
+# The LED pins are using the current controlled outputs
+# and are negative logic (write a 0 to turn on).
+set_io -nowarn led_r	41
+set_io -nowarn led_g	39
+set_io -nowarn led_b	40
+
+# FTDI chip, which sort of works
+set_io -nowarn serial_txd 14 # FPGA transmit to USB
+set_io -nowarn serial_rxd 15 # FPGA receive from USB
+set_io -nowarn fpga_spi_cs 16 # Drive high to ensure that the SPI flash is disabled
+# set_io serial_rts_n 14  # no?
+# set_io serial_dtr_n 16  # no?
+
+# Normal GPIO pins, left side
+set_io -nowarn gpio_23 23
+set_io -nowarn gpio_25 25
+set_io -nowarn gpio_26 26
+set_io -nowarn gpio_27 27
+set_io -nowarn gpio_32 32
+set_io -nowarn gpio_35 35
+set_io -nowarn gpio_31 31
+set_io -nowarn gpio_37 37
+set_io -nowarn gpio_34 34
+set_io -nowarn gpio_43 43
+set_io -nowarn gpio_36 36
+set_io -nowarn gpio_42 42
+set_io -nowarn gpio_38 38
+set_io -nowarn gpio_28 28
+
+# Normal GPIO pins, right side
+set_io -nowarn gpio_12 12
+set_io -nowarn gpio_21 21
+set_io -nowarn gpio_13 13
+set_io -nowarn gpio_19 19
+set_io -nowarn gpio_18 18
+set_io -nowarn gpio_11 11
+set_io -nowarn gpio_9 9
+set_io -nowarn gpio_6 6
+set_io -nowarn gpio_44 44
+set_io -nowarn gpio_4 4
+set_io -nowarn gpio_3 3
+set_io -nowarn gpio_48 48
+set_io -nowarn gpio_45 45
+set_io -nowarn gpio_47 47
+set_io -nowarn gpio_46 46
+set_io -nowarn gpio_2 2
