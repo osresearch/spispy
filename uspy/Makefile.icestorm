@@ -15,7 +15,7 @@ DEVICE-tomu := up5k
 FOOTPRINT-tomu := uwg30
 PIN_SRC-tomu := tomu.pcf
 
-USB_DEV ?= 1-1:1.0
+USB_DEV ?= 1-4:1.0
 BOARD ?= upduino
 DEVICE := $(DEVICE-$(BOARD))
 FOOTPRINT := $(FOOTPRINT-$(BOARD))
@@ -68,12 +68,18 @@ pll_%.v:
 define make-test =
 $1: $1.vvp
 	vvp $$<
+$1.vvp: $1.v
 endef
 
 test: $(TEST-y)
 $(foreach t,$(TEST-y),$(eval $(call make-test,$t)))
 %.vvp:
-	iverilog -o $@ -s $(basename $@) $^
+	iverilog \
+		-o $@ \
+		-s top \
+		-M $(dir $@).$(basename $@).d \
+		$^
+	sed -i -e '1s/^/$@: /'  -e 's/$$/ \\/' $(dir $@).$(basename $@).d
 
 clean:
 	$(RM) *.blif *.asc *.bin *.json .*.d
