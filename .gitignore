@@ -8,3 +8,5 @@ pll_*.v
 .*.d
 *.bit
 *.rom
+*.vvp
+*.vcd
