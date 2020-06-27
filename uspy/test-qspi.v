@@ -4,6 +4,7 @@
  */
 `default_nettype none
 `include "qspi.v"
+`include "util.v"
 
 module top();
 	reg clk;
@@ -32,28 +33,37 @@ module top();
 	reg [3:0] spi_data = 4'b0000;
 	wire [3:0] spi_data_out;
 
-	wire [7:0] spi_byte;
+	wire [7:0] spi_byte_rx;
+	reg [7:0] spi_byte;
+	wire spi_cmd_strobe_raw;
+	wire spi_byte_strobe_raw;
 	wire spi_cmd_strobe;
 	wire spi_byte_strobe;
 	reg [7:0] spi_byte_tx = 0;
 
-	qspi_sync qspi_i(
-		.clk(clk),
-		.reset(reset),
+	qspi_raw qspi_i(
 		.spi_clk_in(spi_clk),
 		.spi_cs_in(spi_cs),
 		.spi_data_in(spi_data),
 		.spi_data_out(spi_data_out),
-		.byte(spi_byte),
-		.byte_tx(spi_byte_tx),
-		.spi_cmd_strobe(spi_cmd_strobe),
-		.spi_byte_strobe(spi_byte_strobe)
+		.spi_byte_rx(spi_byte_rx),
+		.spi_byte_tx(spi_byte_tx),
+		.spi_cmd_strobe(spi_cmd_strobe_raw),
+		.spi_byte_strobe(spi_byte_strobe_raw)
 	);
 
 	reg spi_data_ack = 1;
 	reg [7:0] spi_data_in = 0;
 	reg [7:0] spi_data_orig = 0;
 
+	strobe2strobe spi_cmd_sync(spi_clk, spi_cmd_strobe_raw, clk, spi_cmd_strobe);
+	strobe2strobe spi_byte_sync(spi_clk, spi_byte_strobe_raw, clk, spi_byte_strobe);
+
+	always @(posedge spi_clk)
+	begin
+		if (spi_byte_strobe_raw)
+			spi_byte <= spi_byte_rx;
+	end
 
 	always @(posedge clk)
 	begin
@@ -81,7 +91,7 @@ module top();
 		end
 	end
 
-parameter spi_freq = 2;
+parameter spi_freq = 8;
 
 	/* if (!spi_data_ack) $display("!!! PREVIOUS SPI DATA NOT ACKED"); */
 
