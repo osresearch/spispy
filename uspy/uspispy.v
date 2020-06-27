@@ -2,6 +2,15 @@
  * States:
  * !CS not asserted: do nothing
  * !CS asserted, route it to the outputs and wait for SPI command
+
+Supported commands:
+
+0x9F JDEC ID - uspispy
+0x03 Normal Read - sent to chips
+0x06 Write enable - uspispy
+0x04 Write disable - uspispy
+0x05 Read status register - uspispy
+
  */
 
 `ifndef _uspispy_v_
@@ -53,6 +62,12 @@ module uspispy(
 	assign ram0_clk = spi_clk;
 	assign ram1_clk = spi_clk;
 
+	// spi data commands
+	localparam SPI_CMD_RDID = 8'h9F;
+	localparam SPI_CMD_RDSR = 8'h05;
+	localparam SPI_CMD_WREN = 8'h06;
+	localparam SPI_CMD_WRDS = 8'h04;
+
 	// these will need some adjustment
 	assign spi_cs_enable = 0;
 	reg [3:0] spi_do_enable = 0;
@@ -62,11 +77,12 @@ module uspispy(
 	assign ram1_do = spi_di;
 
 	wire spi_byte_strobe;
-	wire spi_start_strobe;
-	wire [7:0] spi_byte;
+	wire spi_cmd_strobe;
+	wire [7:0] spi_byte_raw;
 	reg [7:0] spi_cmd;
+	reg [7:0] spi_byte;
 	reg [7:0] spi_phase;
-	reg [7:0] spi_byte_out = 8'hA5;
+	reg [7:0] spi_byte_out;
 
 	reg [7:0] uart_tx;
 	reg uart_tx_strobe;
@@ -77,50 +93,86 @@ module uspispy(
 	wire [3:0] spi_do_fpga;
 	assign spi_do = output_fpga ? spi_do_fpga : output_ram ? ram0_di : ram1_di;
 
-	wire spi_cs_sync;
+	wire spi_cmd_strobe_raw;
+	wire spi_byte_strobe_raw;
 
-	qspi_sync qspi(
-		.clk(clk),
-		.reset(reset),
+	qspi_raw qspi_raw0(
 		// physical interface
 		.spi_cs_in(spi_cs_in),
-		.spi_cs_out(spi_cs_sync),
 		.spi_clk_in(spi_clk),
 		.spi_data_in(spi_di),
 		.spi_data_out(spi_do_fpga),
+		.spi_mode(1),
 		// logical interface
-		.spi_byte_strobe(spi_byte_strobe),
-		.spi_cmd_strobe(spi_start_strobe),
-		.byte(spi_byte),
-		.byte_tx(spi_byte_out)
+		.spi_byte_strobe(spi_byte_strobe_raw),
+		.spi_cmd_strobe(spi_cmd_strobe_raw),
+		.spi_byte_rx(spi_byte_raw),
+		.spi_byte_tx(spi_byte_out)
 	);
+
+	reg [7:0] spi_sr = 8'hA5;
+	wire [23:0] spi_id = 24'hC22018;
+
+	always @(posedge spi_clk)
+	begin
+		if (spi_cs_in || reset) begin
+			// nothing to do, turn off any output drivers
+			spi_do_enable <= 4'b0000;
+		end else
+		if (spi_cmd_strobe_raw) begin
+			spi_cmd <= spi_byte_raw;
+			spi_byte <= spi_byte_raw;
+			spi_phase <= 0;
+			spi_do_enable <= 4'b0010;
+
+			if (spi_byte_raw == SPI_CMD_RDID) begin
+				spi_byte_out <= spi_id[23:16];
+			end else
+			if (spi_byte_raw == SPI_CMD_RDSR) begin
+				spi_byte_out <= spi_sr;
+			end else begin
+				// unknown command, do not respond
+				spi_byte_out <= 8'bXXXXXXXX;
+				spi_do_enable <= 4'b0000;
+			end
+		end else
+		if (spi_byte_strobe_raw) begin
+			spi_byte <= spi_byte_raw;
+			spi_phase <= spi_phase + 1;
+
+			if (spi_cmd == SPI_CMD_RDID) begin
+				if (spi_phase == 1)
+					spi_byte_out <= spi_id[15:8];
+				else
+				if (spi_phase == 2)
+					spi_byte_out <= spi_id[7:0];
+				else
+					spi_byte_out <= 8'bXXXXXXXX;
+			end
+		end
+	end
+
+	// synchronize the raw strobes to the clk domain
+	strobe2strobe spi_cmd_sync(spi_clk, spi_cmd_strobe_raw, clk, spi_cmd_strobe);
+	strobe2strobe spi_byte_sync(spi_clk, spi_byte_strobe_raw, clk, spi_byte_strobe);
 
 	always @(posedge clk)
 	begin
 		uart_tx_strobe <= 0;
 
-		if (spi_cs_sync || reset) begin
-			// nothing to do and no output drivers unless selected
-			spi_do_enable <= 0;
-			spi_phase <= 0;
-		end else
-		if (spi_start_strobe) begin
+		if (spi_cmd_strobe) begin
 			// new command!
 			uart_tx_strobe <= 1;
-			uart_tx <= "A"; //spi_byte;
-			spi_cmd <= spi_byte;
+			uart_tx <= spi_byte;
 
 			// enable our data out pin TO the pch
 			// todo: update spi_do_enable based on the single/dual/quad mode
-			spi_do_enable <= 4'b0010;
 		end else
 		if (spi_byte_strobe) begin
 			// accumulate command bytes
-			spi_phase <= spi_phase + 1;
 			uart_tx_strobe <= 1;
-			uart_tx <= `hexdigit(spi_phase); // spi_byte;
 			uart_tx <= spi_byte;
-			spi_byte_out <= spi_byte_out + 1;
+			//spi_byte_out <= spi_byte_out + 1;
 		end
 	end
 endmodule

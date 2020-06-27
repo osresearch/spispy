@@ -200,4 +200,18 @@ module strobe_sync(
 endmodule
 
 
+module strobe2strobe(
+	input clk_a,
+	input strobe_a,
+	input clk_b,
+	output strobe_b
+);
+	reg flag_a = 0;
+	always @(posedge clk_a)
+		flag_a <= strobe_a ^ flag_a;
+
+	strobe_sync sync(clk_b, flag_a, strobe_b);
+endmodule
+
+
 `endif
