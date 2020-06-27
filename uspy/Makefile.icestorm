@@ -29,6 +29,8 @@ PNR ?= $(ICEPATH)nextpnr-ice40
 	$(ICEPATH)iceprog -e 128 # Force a reset
 	$(ICEPATH)iceprog $<
 	echo $(USB_DEV) | tee /sys/bus/usb/drivers/ftdi_sio/bind
+	sleep 1
+	-stty -F /dev/ttyUSB0 1:0:1cbd:0:3:1c:7f:15:4:5:1:0:11:13:1a:0:12:f:17:16:0:0:0:0:0:0:0:0:0:0:0:0:0:0:0:0
 
 %.bin: %.asc
 	$(ICEPATH)icepack $< $@
@@ -77,9 +79,10 @@ $(foreach t,$(TEST-y),$(eval $(call make-test,$t)))
 	iverilog \
 		-o $@ \
 		-s top \
-		-M $(dir $@).$(basename $@).d \
+		-M $(dir $@).$(basename $@).m \
 		$^
-	sed -i -e '1s/^/$@: /'  -e 's/$$/ \\/' $(dir $@).$(basename $@).d
+	sed -i -e '1s/^/$@: /'  -e 's/$$/ \\/' $(dir $@).$(basename $@).m
+	mv $(dir $@).$(basename $@).m $(dir $@).$(basename $@).d
 
 clean:
 	$(RM) *.blif *.asc *.bin *.json .*.d
