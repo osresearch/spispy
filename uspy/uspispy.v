@@ -67,6 +67,7 @@ module uspispy(
 	localparam SPI_CMD_RDSR = 8'h05;
 	localparam SPI_CMD_WREN = 8'h06;
 	localparam SPI_CMD_WRDS = 8'h04;
+	localparam SPI_CMD_READ = 8'h03;
 
 	// these will need some adjustment
 	assign spi_cs_enable = 0;
@@ -81,17 +82,18 @@ module uspispy(
 	wire [7:0] spi_byte_raw;
 	reg [7:0] spi_cmd;
 	reg [7:0] spi_byte;
-	reg [7:0] spi_phase;
+	reg [1:0] spi_phase; // only track the first four bytes
 	reg [7:0] spi_byte_out;
 
 	reg [7:0] uart_tx;
 	reg uart_tx_strobe;
 
 	// select which output goes to the PCH
-	wire output_fpga = 1;
-	wire output_ram = 0;
+	reg read_in_progress = 0;
+	wire output_fpga = !read_in_progress;
+	wire output_ram = read_addr[23]; // select which RAM based on the top bit
 	wire [3:0] spi_do_fpga;
-	assign spi_do = output_fpga ? spi_do_fpga : output_ram ? ram0_di : ram1_di;
+	assign spi_do = output_fpga ? spi_do_fpga : output_ram ? ram1_di : ram0_di;
 
 	wire spi_cmd_strobe_raw;
 	wire spi_byte_strobe_raw;
@@ -110,45 +112,90 @@ module uspispy(
 		.spi_byte_tx(spi_byte_out)
 	);
 
-	reg [7:0] spi_sr = 8'hA5;
+	reg spi_sr_srp0 = 0;
+	reg spi_sr_sec = 0;
+	reg spi_sr_tb = 0;
+	reg [2:0] spi_sr_bp = 0;
+	reg spi_sr_wel = 0;
+	reg spi_sr_busy = 0;
+	wire [7:0] spi_sr = { spi_sr_srp0, spi_sr_sec, spi_sr_tb, spi_sr_bp, spi_sr_wel, spi_sr_busy };
 	wire [23:0] spi_id = 24'hC22018;
 
-	always @(posedge spi_clk)
+	reg [23:0] read_addr = 0;
+
+	always @(posedge spi_clk or posedge spi_cs_in)
 	begin
-		if (spi_cs_in || reset) begin
+		if (spi_cs_in) begin
 			// nothing to do, turn off any output drivers
 			spi_do_enable <= 4'b0000;
+			read_in_progress <= 0;
 		end else
 		if (spi_cmd_strobe_raw) begin
 			spi_cmd <= spi_byte_raw;
 			spi_byte <= spi_byte_raw;
 			spi_phase <= 0;
-			spi_do_enable <= 4'b0010;
 
-			if (spi_byte_raw == SPI_CMD_RDID) begin
+			case(spi_byte_raw)
+			SPI_CMD_RDID: begin
 				spi_byte_out <= spi_id[23:16];
-			end else
-			if (spi_byte_raw == SPI_CMD_RDSR) begin
-				spi_byte_out <= spi_sr;
-			end else begin
-				// unknown command, do not respond
-				spi_byte_out <= 8'bXXXXXXXX;
-				spi_do_enable <= 4'b0000;
+				spi_do_enable <= 4'b0010;
 			end
+			SPI_CMD_RDSR: begin
+				spi_byte_out <= spi_sr;
+				spi_do_enable <= 4'b0010;
+			end
+			SPI_CMD_WREN: begin
+				// write-enable latch
+				spi_sr_wel <= 1;
+			end
+			SPI_CMD_WRDS: begin
+				spi_sr_wel <= 0;
+			end
+			SPI_CMD_READ: begin
+				// a read has started -- output will be routed from
+				// the RAM chips, not the fpga
+				read_in_progress <= 1;
+			end
+			default: begin
+				// unknown command, do not respond
+			end
+			endcase
 		end else
 		if (spi_byte_strobe_raw) begin
 			spi_byte <= spi_byte_raw;
-			spi_phase <= spi_phase + 1;
 
-			if (spi_cmd == SPI_CMD_RDID) begin
-				if (spi_phase == 1)
+			// saturate spi_phase at 3 since we don't care beyond that
+			if (spi_phase != 3)
+				spi_phase <= spi_phase + 1;
+
+			case (spi_cmd)
+			SPI_CMD_RDID: begin
+				if (spi_phase == 0)
 					spi_byte_out <= spi_id[15:8];
 				else
-				if (spi_phase == 2)
+				if (spi_phase == 1)
 					spi_byte_out <= spi_id[7:0];
-				else
-					spi_byte_out <= 8'bXXXXXXXX;
 			end
+			SPI_CMD_READ: begin
+				if (spi_phase == 0) begin
+					read_addr[23:16] <= spi_byte_raw;
+				end else
+				if (spi_phase == 1) begin
+					read_addr[15:8] <= spi_byte_raw;
+				end else
+				if (spi_phase == 2) begin
+					read_addr[7:0] <= spi_byte_raw;
+					spi_do_enable <= 4'b0010; // from the RAM chips
+				end else
+				begin
+					// update the read address for each byte that is strobed
+					read_addr <= read_addr + 1;
+				end
+			end
+			default: begin
+				// nothing to do
+			end
+			endcase
 		end
 	end
 
