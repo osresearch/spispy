@@ -40,11 +40,13 @@ module top();
 	wire spi_cmd_strobe;
 	wire spi_byte_strobe;
 	reg [7:0] spi_byte_tx = 0;
+	reg [2:0] spi_mode = 1;
 
 	qspi_raw qspi_i(
 		.spi_clk_in(spi_clk),
 		.spi_cs_in(spi_cs),
 		.spi_data_in(spi_data),
+		.spi_mode(spi_mode),
 		.spi_data_out(spi_data_out),
 		.spi_byte_rx(spi_byte_rx),
 		.spi_byte_tx(spi_byte_tx),
@@ -99,6 +101,7 @@ parameter spi_freq = 8;
 	spi_data_ack = 0; \
 	spi_data_orig = data; \
 	spi_data_in = data; \
+	spi_mode = 1; \
 	repeat(8) begin \
 		spi_data[0] = spi_data_in[7]; \
 		spi_data_in <<= 1; \
@@ -112,6 +115,7 @@ parameter spi_freq = 8;
 	spi_data_ack = 0; \
 	spi_data_orig = data; \
 	spi_data_in = data; \
+	spi_mode = 4; \
 	repeat(2) begin \
 		spi_data[3:0] = spi_data_in[7:4]; \
 		spi_data_in <<= 4; \

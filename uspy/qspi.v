@@ -32,8 +32,17 @@ module qspi_raw(
 	reg spi_got_cmd = 0;
 
 	// these need to be updated for single/dual/quad SPI
-	wire [7:0] spi_byte_next = { spi_byte[6:0], spi_data_in[0] };
-	wire [2:0] spi_bits_next = spi_bits + 1;
+	wire [7:0] spi_byte_1_next = { spi_byte[6:0], spi_data_in[0:0] };
+	wire [7:0] spi_byte_2_next = { spi_byte[5:0], spi_data_in[1:0] };
+	wire [7:0] spi_byte_4_next = { spi_byte[3:0], spi_data_in[3:0] };
+
+	wire [7:0] spi_byte_next =
+		spi_mode == 1 ? spi_byte_1_next :
+		spi_mode == 2 ? spi_byte_2_next :
+		spi_mode == 4 ? spi_byte_4_next :
+		8'bXXXXXXXX;
+
+	wire [2:0] spi_bits_next = spi_bits + spi_mode;
 
 	// async outputs so that values are available on the rising edge of spi_clk_in
 	wire spi_byte_strobe = spi_bits_next == 0;
@@ -58,15 +67,30 @@ module qspi_raw(
 
 	// these need to be updated for single/dual/quad SPI
 	reg [7:0] tx_byte;
-	assign spi_data_out = { 1'bx, 1'bx, tx_byte[7], 1'bx };
+	wire [3:0] spi_data_out_1 = { 1'bx, 1'bx, tx_byte[7], 1'bx };
+	wire [3:0] spi_data_out_2 = { 1'bx, 1'bx, tx_byte[7:6] };
+	wire [3:0] spi_data_out_4 = { tx_byte[7:3] };
+	assign spi_data_out =
+		spi_mode == 1 ? spi_data_out_1 :
+		spi_mode == 2 ? spi_data_out_2 :
+		spi_mode == 4 ? spi_data_out_4 :
+		4'bXXXX;
 
 	always @(negedge spi_clk_in)
 	begin
 		if (spi_bits == 0) begin
 			tx_byte <= spi_byte_tx;
-		end else begin
+		end else
+		if (spi_mode == 1)
 			tx_byte <= { tx_byte[6:0], 1'bX };
-		end
+		else
+		if (spi_mode == 2)
+			tx_byte <= { tx_byte[5:0], 2'bXX };
+		else
+		if (spi_mode == 4)
+			tx_byte <= { tx_byte[3:0], 4'bXXXX };
+		else
+			tx_byte <= 8'bXXXXXXXX;
 	end
 
 endmodule
