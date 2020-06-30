@@ -181,12 +181,12 @@ endmodule
 
 
 /*
- * Clock crossing strobe.
+ * Convert a polarity change flag to a strobe in the clk domain.
  *
  * The input should switch polarity to signal changes,
  * which will be translated into single clock strobes in the clk domain.
  */
-module strobe_sync(
+module flag2strobe(
 	input clk,
 	input flop,
 	output strobe
@@ -200,6 +200,9 @@ module strobe_sync(
 endmodule
 
 
+/*
+ * Convert a single clock strobe in clk_a to a single clock strobe in clk_b.
+ */
 module strobe2strobe(
 	input clk_a,
 	input strobe_a,
@@ -210,9 +213,13 @@ module strobe2strobe(
 	always @(posedge clk_a)
 		flag_a <= strobe_a ^ flag_a;
 
-	strobe_sync sync(clk_b, flag_a, strobe_b);
+	flag2strobe sync(clk_b, flag_a, strobe_b);
 endmodule
 
+
+/*
+ * Syncronize an input into clk domain and output the rising/falling edges.
+ */
 module edge(
 	input clk,
 	input in,
