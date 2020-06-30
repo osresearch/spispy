@@ -10,3 +10,7 @@ pll_*.v
 *.rom
 *.vvp
 *.vcd
+*.hex
+*.o
+a.out
+*.elf
