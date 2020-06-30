@@ -34,10 +34,10 @@ module uspispy(
 	output spi_byte_strobe_out, // for every byte during a command, optional
 
 	// allow the controller to track the status register and update it
-	// after operations
+	// after operations (in the clk domain)
 	output [7:0] spi_sr,
 	input [7:0] spi_sr_in,
-	input spi_sr_strobe,
+	input spi_sr_in_strobe,
 
 	// write to memory buffer output in spi_clk domain
 	// this is used by write commands to buffer the incoming data before
@@ -120,7 +120,7 @@ module uspispy(
 	reg spi_cmd_done_flag = 0;
 
 	// synchronize the raw strobes from spi_clk to the clk domain
-	strobe_sync spi_cmd_sync(spi_cmd_done_flag, clk, spi_cmd_strobe);
+	flag2strobe spi_cmd_sync(spi_cmd_done_flag, clk, spi_cmd_strobe);
 	strobe2strobe spi_byte_sync(spi_clk, spi_byte_strobe_raw, clk, spi_byte_strobe_out);
 
 	// watch for a spi_cmd_strobe and a return to cs idle
@@ -158,12 +158,14 @@ module uspispy(
 
 	reg [23:0] spi_addr = 0;
 
-	// convert the spi sr update strobe from clk to spi_clk
-	wire spi_clk_sr_strobe;
-	strobe2strobe spi_sr_strobe_sync(clk, spi_sr_strobe, spi_clk, spi_clk_sr_strobe);
+	// convert the spi sr update flag to spi_clk domain
+	wire spi_sr_strobe;
+	strobe2strobe spi_sr_strobe_sync(clk, spi_sr_in_strobe, spi_clk, spi_sr_strobe);
 
 	always @(posedge spi_clk or posedge spi_cs_in)
 	begin
+		// only write one byte per clk
+		write_strobe <= 0;
 		if (spi_cs_in) begin
 			// signal that we have a command, if we have one
 
@@ -225,9 +227,16 @@ module uspispy(
 				// unknown command, do not respond
 			end
 			endcase
+
+			// update the spi_sr if the external controller has signaled a write
+			if (spi_sr_strobe) spi_sr <= spi_sr_in;
+
 		end else
 		if (spi_byte_strobe_raw) begin
 			spi_byte_out <= spi_byte_raw;
+
+			// update the spi_sr if the external controller has signaled a write
+			if (spi_sr_strobe) spi_sr <= spi_sr_in;
 
 			spi_len <= spi_len + 1;
 
@@ -272,12 +281,8 @@ module uspispy(
 			end
 			endcase
 		end else begin
-			// only write one byte per clk
-			write_strobe <= 0;
-
 			// update the spi_sr if the external controller has signaled a write
-			if (spi_clk_sr_strobe)
-				spi_sr <= spi_sr_in;
+			if (spi_sr_strobe) spi_sr <= spi_sr_in;
 		end
 
 	end

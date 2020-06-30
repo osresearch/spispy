@@ -16,7 +16,7 @@
 `default_nettype none
 
 `define PICOSOC_MEM ice40up5k_spram
-`define PICOSOC_BRAM "spispy_fw.hex"
+`define PICOSOC_BRAM "firmware.hex"
 
 
 `include "util.v"
@@ -182,17 +182,42 @@ module top(
 	wire [31:0] spi_addr;
 	wire [11:0] spi_len;
 	wire [7:0] spi_sr;
+	reg [7:0] spi_sr_in;
+	reg spi_sr_strobe;
 
-	// memory buffer for spi write commands
+	// memory buffer for spi write commands; stores 8-bits at a time in spi_clk domain
+	// reads 32-bits at a time in clk domain
 	wire spi_write_strobe;
 	wire [7:0] spi_write_data;
 	wire [7:0] spi_write_addr;
-	reg [7:0] spi_write_buffer[0:255];
+	reg [31:0] spi_write_buffer[0:63];
+	reg [31:0] spi_write_buffer_read;
 
 	always @(posedge spi_clk) begin
-		if (spi_write_strobe)
-			spi_write_buffer[spi_write_addr] <= spi_write_data;
+		if (!spi_write_strobe) begin
+			// nothing to do
+		end else
+		case(spi_write_addr[1:0])
+		2'b00: spi_write_buffer[spi_write_addr[7:2]][ 7: 0] <= spi_write_data;
+		2'b01: spi_write_buffer[spi_write_addr[7:2]][15: 8] <= spi_write_data;
+		2'b10: spi_write_buffer[spi_write_addr[7:2]][23:16] <= spi_write_data;
+		2'b11: spi_write_buffer[spi_write_addr[7:2]][31:24] <= spi_write_data;
+		endcase
 	end
+
+	always @(posedge clk) begin
+		spi_write_buffer_read <= spi_write_buffer[iomem_addr[7:0]];
+	end
+
+	// record when the reception time of a spi command
+	reg [23:0] counter = 0;
+	reg [23:0] spi_counter = 0;
+	always @(posedge clk) begin
+		counter <= counter + 1;
+		if (spi_cmd_strobe)
+			spi_counter <= counter;
+	end
+
 
 	uspispy uspi(
 		.clk(clk),
@@ -204,15 +229,14 @@ module top(
 		.spi_addr_out(spi_addr),
 		.spi_len_out(spi_len),
 		.spi_sr(spi_sr),
-		.spi_sr_in(0),
-		.spi_sr_strobe(0),
+		.spi_sr_in(spi_sr_in),
+		.spi_sr_in_strobe(spi_sr_strobe),
 
 		// memory buffer with write port in spi_clk domain
 		.write_data(spi_write_data),
 		.write_addr(spi_write_addr),
 		.write_strobe(spi_write_strobe),
-		
-		
+
 		// spi bus physical interface
 		.spi_clk(spi_clk),
 		.spi_cs_in(spi_cs_in),
@@ -243,20 +267,47 @@ module top(
 
 	reg [31:0] gpio;
 
+	wire gpio_sel = iomem_addr[31:20] == 12'h030;
+	wire uspy_sel = iomem_addr[31:20] == 12'h040;
+	wire wbuf_sel = iomem_addr[31:20] == 12'h041;
+
 	always @(posedge clk) begin
+		spi_sr_strobe <= 0;
+
 		if (!resetn) begin
 			gpio <= 0;
-		end else begin
-// todo: add spi mux steering here for memory mapped io device
+		end else
+		if (!iomem_valid || iomem_ready) begin
 			iomem_ready <= 0;
-			if (iomem_valid && !iomem_ready && iomem_addr[31:24] == 8'h 03) begin
-				iomem_ready <= 1;
-				iomem_rdata <= gpio;
-				if (iomem_wstrb[0]) gpio[ 7: 0] <= iomem_wdata[ 7: 0];
-				if (iomem_wstrb[1]) gpio[15: 8] <= iomem_wdata[15: 8];
-				if (iomem_wstrb[2]) gpio[23:16] <= iomem_wdata[23:16];
-				if (iomem_wstrb[3]) gpio[31:24] <= iomem_wdata[31:24];
+		end else
+		if (gpio_sel) begin
+			iomem_ready <= 1;
+			iomem_rdata <= gpio;
+			if (iomem_wstrb[0]) gpio[ 7: 0] <= iomem_wdata[ 7: 0];
+			if (iomem_wstrb[1]) gpio[15: 8] <= iomem_wdata[15: 8];
+			if (iomem_wstrb[2]) gpio[23:16] <= iomem_wdata[23:16];
+			if (iomem_wstrb[3]) gpio[31:24] <= iomem_wdata[31:24];
+		end else
+		if (uspy_sel) begin
+			iomem_ready <= 1;
+			case(iomem_addr[7:0])
+			8'h00: iomem_rdata <= { spi_counter, spi_cmd };
+			8'h04: iomem_rdata <= { spi_addr };
+			8'h08: begin
+				iomem_rdata <= { spi_len, spi_sr };
+				if (iomem_wstrb[0]) begin
+					spi_sr_in <= iomem_wdata[7:0];
+					spi_sr_strobe <= 1;
+				end
 			end
+			endcase
+		end else
+		if (wbuf_sel) begin
+			// read from the SPI write buffer
+			iomem_ready <= 1;
+			iomem_rdata <= spi_write_buffer_read;
+		end else begin
+			// not a valid memory mapped device
 		end
 	end
 
