@@ -213,5 +213,20 @@ module strobe2strobe(
 	strobe_sync sync(clk_b, flag_a, strobe_b);
 endmodule
 
+module edge(
+	input clk,
+	input in,
+	output rising,
+	output falling
+);
+	parameter DELAY = 2;
+	reg [DELAY:0] sync;
+	assign falling = sync[DELAY] && !sync[DELAY-1];
+	assign rising = !sync[DELAY] && sync[DELAY-1];
+
+	always @(posedge clk)
+		sync <= { sync[DELAY-1:0], in };
+endmodule
 
 `endif
+
