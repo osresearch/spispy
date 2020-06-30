@@ -14,9 +14,18 @@
 #define SPI_MISO 12 // brown
  */
 `default_nettype none
-`include "uart.v"
+
+`define PICOSOC_MEM ice40up5k_spram
+`define PICOSOC_BRAM "spispy_fw.hex"
+
+
 `include "util.v"
 `include "uspispy.v"
+`include "pll_16.v"
+`include "picorv32/ice40up5k_spram.v"
+`include "picorv32/simpleuart.v"
+`include "picorv32/picosoc.v"
+`include "picorv32/picorv32.v"
 
 module top(
 	output serial_txd,
@@ -60,6 +69,7 @@ module top(
 	inout gpio_2, // D0 ram1
 );
 	assign fpga_spi_cs = 1;
+	parameter integer MEM_WORDS = 32768;
 
 	wire clk_48mhz;
 	SB_HFOSC u_hfosc(
@@ -68,33 +78,25 @@ module top(
 		.CLKHF(clk_48mhz),
 	);
 
-/*
+	wire clk_16mhz;
 	wire locked;
-	wire clk;
-	wire reset = !locked;
-	pll_120 pll(clk_48mhz, clk, locked);
-*/
-	wire clk = clk_48mhz;
-	wire reset = 0;
+	pll_16 pll(clk_48mhz, clk_16mhz, locked);
+
+	reg [5:0] reset_cnt = 0;
+	wire resetn = &reset_cnt;
+	wire reset = !resetn;
+
+	wire clk = clk_16mhz;
+	always @(posedge clk_16mhz) begin
+		if (!locked)
+			reset_cnt <= 0;
+		else
+			reset_cnt <= reset_cnt + !resetn;
+	end
 
 	assign led_b = serial_rxd;
 	assign led_g = serial_txd;
 	assign led_r = spi_cs_in; // negative logic
-
-	// divide clk60 by 20 to get a 3 MHz baud clock
-	wire clk_3;
-	divide_by_n #(16) baud_clock(clk, reset, clk_3);
-	wire [7:0] uart_tx;
-	wire uart_tx_strobe;
-	
-	uart_tx_fifo serial_tx_fifo(
-		.clk(clk),
-		.reset(reset),
-		.baud_x1(clk_3),
-		.data(uart_tx),
-		.data_strobe(uart_tx_strobe),
-		.serial(serial_txd),
-	);
 
 	// physical pins for the three SPI ports
 	wire spi_clk_pin = gpio_26;
@@ -174,11 +176,44 @@ module top(
 		.D_OUT_0(ram1_do),
 	);
 
+	// spi logical interface for logging and slow command emulation
+	wire spi_cmd_strobe;
+	wire [7:0] spi_cmd;
+	wire [31:0] spi_addr;
+	wire [11:0] spi_len;
+	wire [7:0] spi_sr;
+
+	// memory buffer for spi write commands
+	wire spi_write_strobe;
+	wire [7:0] spi_write_data;
+	wire [7:0] spi_write_addr;
+	reg [7:0] spi_write_buffer[0:255];
+
+	always @(posedge spi_clk) begin
+		if (spi_write_strobe)
+			spi_write_buffer[spi_write_addr] <= spi_write_data;
+	end
+
 	uspispy uspi(
 		.clk(clk),
 		.reset(reset),
-		.uart_tx(uart_tx),
-		.uart_tx_strobe(uart_tx_strobe),
+
+		// logical interfaces in clk domain
+		.spi_cmd_strobe_out(spi_cmd_strobe),
+		.spi_cmd_out(spi_cmd),
+		.spi_addr_out(spi_addr),
+		.spi_len_out(spi_len),
+		.spi_sr(spi_sr),
+		.spi_sr_in(0),
+		.spi_sr_strobe(0),
+
+		// memory buffer with write port in spi_clk domain
+		.write_data(spi_write_data),
+		.write_addr(spi_write_addr),
+		.write_strobe(spi_write_strobe),
+		
+		
+		// spi bus physical interface
 		.spi_clk(spi_clk),
 		.spi_cs_in(spi_cs_in),
 		.spi_cs_out(spi_cs_out),
@@ -186,6 +221,7 @@ module top(
 		.spi_di(spi_di),
 		.spi_do(spi_do),
 		.spi_do_enable(spi_do_enable),
+		// psram physical interfaces
 		.ram0_clk(ram0_clk_pin),
 		.ram0_cs(ram0_cs_pin),
 		.ram0_di(ram0_di),
@@ -198,5 +234,53 @@ module top(
 		.ram1_do_enable(ram1_do_enable),
 	);
 
+	wire        iomem_valid;
+	reg         iomem_ready;
+	wire [3:0]  iomem_wstrb;
+	wire [31:0] iomem_addr;
+	wire [31:0] iomem_wdata;
+	reg  [31:0] iomem_rdata;
+
+	reg [31:0] gpio;
+
+	always @(posedge clk) begin
+		if (!resetn) begin
+			gpio <= 0;
+		end else begin
+// todo: add spi mux steering here for memory mapped io device
+			iomem_ready <= 0;
+			if (iomem_valid && !iomem_ready && iomem_addr[31:24] == 8'h 03) begin
+				iomem_ready <= 1;
+				iomem_rdata <= gpio;
+				if (iomem_wstrb[0]) gpio[ 7: 0] <= iomem_wdata[ 7: 0];
+				if (iomem_wstrb[1]) gpio[15: 8] <= iomem_wdata[15: 8];
+				if (iomem_wstrb[2]) gpio[23:16] <= iomem_wdata[23:16];
+				if (iomem_wstrb[3]) gpio[31:24] <= iomem_wdata[31:24];
+			end
+		end
+	end
+
+	picosoc #(
+		.BARREL_SHIFTER(0),
+		.ENABLE_MULDIV(0),
+		.MEM_WORDS(MEM_WORDS)
+	) soc (
+		.clk          (clk         ),
+		.resetn       (resetn      ),
+
+		.ser_tx       (serial_txd  ),
+		.ser_rx       (serial_rxd  ),
+
+		.irq_5        (1'b0        ),
+		.irq_6        (1'b0        ),
+		.irq_7        (1'b0        ),
+
+		.iomem_valid  (iomem_valid ),
+		.iomem_ready  (iomem_ready ),
+		.iomem_wstrb  (iomem_wstrb ),
+		.iomem_addr   (iomem_addr  ),
+		.iomem_wdata  (iomem_wdata ),
+		.iomem_rdata  (iomem_rdata )
+	);
 endmodule
 

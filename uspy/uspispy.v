@@ -1,9 +1,11 @@
 /*
- * States:
- * !CS not asserted: do nothing
- * !CS asserted, route it to the outputs and wait for SPI command
-
-Supported commands:
+ * High-speed QSPI mux and router.
+ *
+ * This module implements the high-speed, low-latency part of the uspispy,
+ * which involves routing the incoming SPI/QSPI read commands from the PCH to the
+ * PSRAM chips.  Any other commands are routed instead to the external control module,
+ * which is not latency sensitive, so it runs in a riscv soft cpu.  All commands are logged
+ * to the riscv CPU, so that it can monitor the transactions as well.
 
 0x9F JDEC ID - uspispy
 0x03 Normal Read - sent to chips
@@ -19,40 +21,30 @@ Supported commands:
 `include "qspi.v"
 `include "util.v"
 
-module mem(
-	input wr_clk,
-	input wr_enable,
-	input [7:0] wr_addr,
-	input [7:0] wr_data,
-	input rd_clk,
-	input [7:0] rd_addr,
-	output [7:0] rd_data
-);
-	reg [7:0] ram[0:255];
-	reg [7:0] rd_data;
-
-	always @(posedge wr_clk)
-	begin
-		if (wr_enable)
-			ram[wr_addr] <= wr_data;
-	end
-
-	always @(posedge rd_clk)
-	begin
-		rd_data <= ram[rd_addr];
-	end
-endmodule
-
-
 module uspispy(
 	input clk,
 	input reset,
 
-	// serial interface to the outside world
-	input [7:0] uart_rx,
-	input uart_rx_strobe,
-	output [7:0] uart_tx,
-	output uart_tx_strobe,
+	// logical controller to the outside world in clk domain
+	output reg [7:0] spi_cmd_out,
+	output reg [31:0] spi_addr_out,
+	output reg [11:0] spi_len_out,
+	output spi_cmd_strobe_out, // at the end of the command
+	output reg [7:0] spi_byte_out,
+	output spi_byte_strobe_out, // for every byte during a command, optional
+
+	// allow the controller to track the status register and update it
+	// after operations
+	output [7:0] spi_sr,
+	input [7:0] spi_sr_in,
+	input spi_sr_strobe,
+
+	// write to memory buffer output in spi_clk domain
+	// this is used by write commands to buffer the incoming data before
+	// committing it to the flash chip.
+	output reg [7:0] write_data,
+	output reg [7:0] write_addr,
+	output reg write_strobe,
 
 	// physical interface to the external SPI bus
 	// this involves driving the !CS pin sometimes, so it has a output enable pin
@@ -98,6 +90,7 @@ module uspispy(
 	localparam SPI_CMD_WRDS = 8'h04;
 	localparam SPI_CMD_READ = 8'h03;
 	localparam SPI_CMD_PP3	= 8'h02;
+	localparam SPI_CMD_ERASE= 8'h20;
 
 	// these will need some adjustment
 	assign spi_cs_enable = 0;
@@ -107,20 +100,14 @@ module uspispy(
 	assign ram0_do = spi_di;
 	assign ram1_do = spi_di;
 
-	wire spi_byte_strobe;
-	wire spi_cmd_strobe;
 	wire [7:0] spi_byte_raw;
+	reg spi_got_cmd;
 	reg [7:0] spi_cmd;
-	reg [7:0] spi_byte;
-	reg [1:0] spi_phase; // only track the first four bytes
-	reg [7:0] spi_byte_out;
-
-	reg [7:0] uart_tx;
-	reg uart_tx_strobe;
+	reg [11:0] spi_len;
+	reg [7:0] spi_byte_tx = 0;
 
 	// select which output goes to the PCH
 	reg read_in_progress = 0;
-	reg write_in_progress = 0;
 	wire output_fpga = !read_in_progress;
 	wire output_ram = spi_addr[23]; // select which RAM based on the top bit
 	wire [3:0] spi_do_fpga;
@@ -128,7 +115,30 @@ module uspispy(
 
 	wire spi_cmd_strobe_raw;
 	wire spi_byte_strobe_raw;
+	wire spi_byte_strobe;
+	wire spi_cmd_strobe;
+	reg spi_cmd_done_flag = 0;
 
+	// synchronize the raw strobes from spi_clk to the clk domain
+	strobe_sync spi_cmd_sync(spi_cmd_done_flag, clk, spi_cmd_strobe);
+	strobe2strobe spi_byte_sync(spi_clk, spi_byte_strobe_raw, clk, spi_byte_strobe_out);
+
+	// watch for a spi_cmd_strobe and a return to cs idle
+	wire spi_cs_rising;
+	edge spi_cs_edge(clk, spi_cs_in, spi_cs_rising);
+	assign spi_cmd_strobe_out = spi_cs_rising && spi_len_out != 0;
+
+	always @(posedge clk)
+	begin
+		if (spi_cmd_strobe_out) begin
+			spi_cmd_out <= spi_cmd;
+			spi_len_out <= spi_len;
+			spi_addr_out <= spi_addr;
+		end
+	end
+
+
+	// decoder for the external SPI bus, from the PCH
 	qspi_raw qspi_raw0(
 		// physical interface
 		.spi_cs_in(spi_cs_in),
@@ -140,77 +150,76 @@ module uspispy(
 		.spi_byte_strobe(spi_byte_strobe_raw),
 		.spi_cmd_strobe(spi_cmd_strobe_raw),
 		.spi_byte_rx(spi_byte_raw),
-		.spi_byte_tx(spi_byte_out)
+		.spi_byte_tx(spi_byte_tx)
 	);
 
-	reg spi_sr_srp0 = 0;
-	reg spi_sr_sec = 0;
-	reg spi_sr_tb = 0;
-	reg [2:0] spi_sr_bp = 0;
-	reg spi_sr_wel = 0;
-	reg spi_sr_busy = 0;
-	wire [7:0] spi_sr = {
-		spi_sr_srp0,
-		spi_sr_sec,
-		spi_sr_tb,
-		spi_sr_bp,
-		spi_sr_wel,
-		spi_sr_busy
-	};
+	reg [7:0] spi_sr;
 	wire [23:0] spi_id = 24'hC22018;
 
 	reg [23:0] spi_addr = 0;
 
-	reg write_buffer_enable = 0;
-	reg [7:0] write_offset = 0;
-	reg [7:0] read_offset = 0;
-	wire [7:0] read_data;
-	mem write_buffer(spi_clk, write_buffer_enable, write_offset, spi_byte_raw, clk, read_offset, read_data);
+	// convert the spi sr update strobe from clk to spi_clk
+	wire spi_clk_sr_strobe;
+	strobe2strobe spi_sr_strobe_sync(clk, spi_sr_strobe, spi_clk, spi_clk_sr_strobe);
 
 	always @(posedge spi_clk or posedge spi_cs_in)
 	begin
-		write_buffer_enable <= 0;
-
 		if (spi_cs_in) begin
-			// nothing to do, turn off any output drivers
-			spi_do_enable <= 4'b0000;
-			read_in_progress <= 0;
-			write_in_progress <= 0;
+			// signal that we have a command, if we have one
 
-			// select both ram chips most of the time
+			// turn off any output drivers
+			spi_do_enable <= 4'b0000;
+
+			// reset the write address to the start of the buffer
+			write_addr <= 0;
+			spi_len <= 0;
+
+			// select both ram chips to be ready for a read command
 			ram1_enabled <= 1;
 			ram0_enabled <= 1;
 		end else
 		if (spi_cmd_strobe_raw) begin
+			spi_cmd_done_flag <= 0;
 			spi_cmd <= spi_byte_raw;
-			spi_byte <= spi_byte_raw;
-			spi_phase <= 0;
+			spi_byte_out <= spi_byte_raw;
+			spi_len <= 1;
+
+			// default is to *NOT* route the command to any of the PSRAM,
+			// with the exception of the read command
+			ram0_enabled <= 0;
+			ram1_enabled <= 0;
 
 			case(spi_byte_raw)
 			SPI_CMD_RDID: begin
-				spi_byte_out <= spi_id[23:16];
+				spi_byte_tx <= spi_id[23:16];
 				spi_do_enable <= 4'b0010;
 			end
 			SPI_CMD_RDSR: begin
-				spi_byte_out <= spi_sr;
+				spi_byte_tx <= spi_sr;
 				spi_do_enable <= 4'b0010;
 			end
 			SPI_CMD_WREN: begin
 				// write-enable latch
-				spi_sr_wel <= 1;
+				spi_sr[0] <= 1;
 			end
 			SPI_CMD_WRDS: begin
-				spi_sr_wel <= 0;
+				spi_sr[0] <= 0;
 			end
 			SPI_CMD_READ: begin
-				// a read has started -- output will be routed from
-				// the RAM chips, not the fpga
+				// a read has started!
+				// route the read command to any of the PSRAM
 				read_in_progress <= 1;
+				ram0_enabled <= 1;
+				ram1_enabled <= 1;
+			end
+			SPI_CMD_ERASE: begin
+				// erase a 4 KB sector if writes are enabled
+				spi_sr[1] <= 1;
 			end
 			SPI_CMD_PP3: begin
-				// a write has started -- start buffering it
-				write_in_progress <= 1;
-				write_offset <= 0;
+				// a write has started -- start buffering it if writes are enabled
+				// and then select the correct chip to write once it is done
+				spi_sr[1] <= 1;
 			end
 			default: begin
 				// unknown command, do not respond
@@ -218,79 +227,61 @@ module uspispy(
 			endcase
 		end else
 		if (spi_byte_strobe_raw) begin
-			spi_byte <= spi_byte_raw;
+			spi_byte_out <= spi_byte_raw;
 
-			// saturate spi_phase at 3 since we don't care beyond that
-			if (spi_phase != 3)
-				spi_phase <= spi_phase + 1;
+			spi_len <= spi_len + 1;
 
 			// assume that the first three bytes are the address
-			if (spi_phase == 0) spi_addr[23:16] <= spi_byte_raw;
-			if (spi_phase == 1) spi_addr[15: 8] <= spi_byte_raw;
-			if (spi_phase == 2) spi_addr[ 7: 0] <= spi_byte_raw;
+			if (spi_len == 1) spi_addr[23:16] <= spi_byte_raw;
+			if (spi_len == 2) spi_addr[15: 8] <= spi_byte_raw;
+			if (spi_len == 3) spi_addr[ 7: 0] <= spi_byte_raw;
 
 			case (spi_cmd)
 			SPI_CMD_RDID: begin
-				if (spi_phase == 0)
-					spi_byte_out <= spi_id[15:8];
+				if (spi_len == 1)
+					spi_byte_tx <= spi_id[15:8];
 				else
-				if (spi_phase == 1)
-					spi_byte_out <= spi_id[7:0];
+				if (spi_len == 2)
+					spi_byte_tx <= spi_id[7:0];
 			end
 			SPI_CMD_READ: begin
-				if (spi_phase == 2) begin
+				if (spi_len == 3) begin
 					// enable our output pin, which will be routed
 					// from the appropriate RAM chip
 					spi_do_enable <= 4'b0010;
 				end else
-				if (spi_phase == 3) begin
+				if (spi_len > 3) begin
 					// update the read address for each byte that is strobed
+					// todo: add toctou capability
 					spi_addr <= spi_addr + 1;
 				end
 			end
 			SPI_CMD_PP3: begin
-				if (spi_phase == 0) begin
-					// select the correct RAM chip based on the top bit
-					// of the address.
-					ram0_enabled <= spi_byte_raw[7] == 0;
-					ram1_enabled <= spi_byte_raw[7] == 1;
-				end else
-				if (spi_phase == 3) begin
+				if (spi_len > 3) begin
 					// store the byte into the write buffer
-					write_buffer_enable <= 1;
-					write_offset <= write_offset + 1;
+					write_addr <= write_addr + 1;
+					write_data <= spi_byte_raw;
+					write_strobe <= 1;
 				end
+			end
+			SPI_CMD_ERASE: begin
+				// nothing to do; the external controller will handle it
 			end
 			default: begin
 				// nothing to do
 			end
 			endcase
+		end else begin
+			// only write one byte per clk
+			write_strobe <= 0;
+
+			// update the spi_sr if the external controller has signaled a write
+			if (spi_clk_sr_strobe)
+				spi_sr <= spi_sr_in;
 		end
+
 	end
 
-	// synchronize the raw strobes to the clk domain
-	strobe2strobe spi_cmd_sync(spi_clk, spi_cmd_strobe_raw, clk, spi_cmd_strobe);
-	strobe2strobe spi_byte_sync(spi_clk, spi_byte_strobe_raw, clk, spi_byte_strobe);
-
-	always @(posedge clk)
-	begin
-		uart_tx_strobe <= 0;
-
-		if (spi_cmd_strobe) begin
-			// new command!
-			uart_tx_strobe <= 1;
-			uart_tx <= spi_byte;
-
-			// enable our data out pin TO the pch
-			// todo: update spi_do_enable based on the single/dual/quad mode
-		end else
-		if (spi_byte_strobe) begin
-			// accumulate command bytes
-			uart_tx_strobe <= 1;
-			uart_tx <= spi_byte;
-			//spi_byte_out <= spi_byte_out + 1;
-		end
-	end
 endmodule
 
 `endif
