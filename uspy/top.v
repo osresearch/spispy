@@ -16,7 +16,7 @@
 `default_nettype none
 
 `define PICOSOC_MEM ice40up5k_spram
-`define PICOSOC_BRAM "firmware.hex"
+`define PICOSOC_BRAM "firmware.syn.hex"
 
 
 `include "util.v"
@@ -96,7 +96,7 @@ module top(
 
 	assign led_b = serial_rxd;
 	assign led_g = serial_txd;
-	assign led_r = spi_cs_in; // negative logic
+	assign led_r = !gpio[7]; // spi_cs_in; // negative logic
 
 	// physical pins for the three SPI ports
 	wire spi_clk_pin = gpio_26;
@@ -273,6 +273,7 @@ module top(
 
 	always @(posedge clk) begin
 		spi_sr_strobe <= 0;
+		iomem_ready <= 0;
 
 		if (!resetn) begin
 			gpio <= 0;
@@ -306,8 +307,6 @@ module top(
 			// read from the SPI write buffer
 			iomem_ready <= 1;
 			iomem_rdata <= spi_write_buffer_read;
-		end else begin
-			// not a valid memory mapped device
 		end
 	end
 

@@ -3,6 +3,8 @@ all: top.bin
 
 TEST-y += test-qspi
 
+top.bin: firmware.hex
+
 include Makefile.icestorm
 
 CROSS ?= /opt/riscv32i/bin/riscv32-unknown-elf-

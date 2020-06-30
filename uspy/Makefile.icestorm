@@ -55,7 +55,17 @@ PNR ?= $(ICEPATH)nextpnr-ice40
 	$(PNR) --gui --$(DEVICE) --pcf $(PIN_SRC) --json $<
 
 %.bin: %.asc
-	$(ICEPATH)icepack $^ $@
+	cp $< $<.new
+	for bram in $(filter %.hex,$^); do \
+		echo "Replacing $$bram" ; \
+		$(ICEPATH)icebram \
+			$$(basename $$bram .hex).syn.hex \
+			$$bram \
+			< $<.new > $<.tmp \
+		|| exit 1 ; \
+		mv $<.tmp $<.new ; \
+	done
+	$(ICEPATH)icepack $<.new $@
 
 # Generate a desired MHz pll
 pll_%.v:
