@@ -293,11 +293,12 @@ module top(
 		if (uspy_sel) begin
 			iomem_ready <= 1;
 			case(iomem_addr[7:0])
-			8'h00: iomem_rdata <= { 8'h00, counter };
+			8'h00: iomem_rdata <= { 4'h0, counter };
 			8'h04: iomem_rdata <= { spi_counter, spi_cmd };
 			8'h08: iomem_rdata <= { spi_addr };
-			8'h0c: begin
-				iomem_rdata <= { spi_len, spi_sr };
+			8'h0c: iomem_rdata <= { 20'h00000, spi_len };
+			8'h10: begin
+				iomem_rdata <= { 24'h000000, spi_sr };
 				if (iomem_wstrb[0]) begin
 					spi_sr_in <= iomem_wdata[7:0];
 					spi_sr_strobe <= 1;
