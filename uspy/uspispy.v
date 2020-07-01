@@ -134,21 +134,31 @@ module uspispy(
 	begin
 		spi_cmd_strobe_out <= 0;
 
+		if (spi_cs_falling) begin
+			// start of a new transaction, wait to get a command strobe
+			spi_cmd_received <= 0;
+		end else
 		if (spi_cmd_strobe) begin
 			// this transaction has a valid command
 			spi_cmd_received <= 1;
 		end else
 		if (spi_cs_rising && spi_cmd_received) begin
 			// the transaction is over and had a valid command
-			// copy it to the output
 			spi_cmd_received <= 0;
-			spi_cmd_strobe_out <= 1;
-			spi_cmd_out <= spi_cmd;
-			spi_len_out <= spi_len;
-			spi_addr_out <= spi_addr;
-		end else
-		if (spi_cs_falling) begin
-			spi_cmd_received <= 0;
+
+			if (spi_cmd == SPI_CMD_RDID
+			||  spi_cmd == SPI_CMD_RDSR
+			||  spi_cmd == SPI_CMD_WREN
+			||  spi_cmd == SPI_CMD_WRDS
+			) begin
+				// don't alert the user status register events
+			end else begin
+				// otherwise copy it to the output
+				spi_cmd_strobe_out <= 1;
+				spi_cmd_out <= spi_cmd;
+				spi_len_out <= spi_len;
+				spi_addr_out <= spi_addr;
+			end
 		end
 	end
 
@@ -187,6 +197,10 @@ module uspispy(
 			// reset the write address to the start of the buffer
 			write_addr <= 0;
 
+			// flag that any read is done, so the FPGA becomes the
+			// default output on the DO pins
+			read_in_progress <= 0;
+
 			// select both ram chips to be ready for a read command
 			ram1_enabled <= 1;
 			ram0_enabled <= 1;
@@ -211,11 +225,12 @@ module uspispy(
 				spi_do_enable <= 4'b0010;
 			end
 			SPI_CMD_WREN: begin
-				// write-enable latch
-				spi_sr[0] <= 1;
+				// SR.WEL: write-enable latch
+				spi_sr[1] <= 1;
 			end
 			SPI_CMD_WRDS: begin
-				spi_sr[0] <= 0;
+				// SR.WEL
+				spi_sr[1] <= 0;
 			end
 			SPI_CMD_READ: begin
 				// a read has started!
@@ -226,12 +241,12 @@ module uspispy(
 			end
 			SPI_CMD_ERASE: begin
 				// erase a 4 KB sector if writes are enabled
-				spi_sr[1] <= 1;
+				spi_sr[0] <= 1;
 			end
 			SPI_CMD_PP3: begin
 				// a write has started -- start buffering it if writes are enabled
 				// and then select the correct chip to write once it is done
-				spi_sr[1] <= 1;
+				spi_sr[0] <= 1;
 			end
 			default: begin
 				// unknown command, do not respond
