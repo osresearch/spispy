@@ -37,7 +37,8 @@ typedef struct {
 	volatile uint32_t counter;
 	volatile uint32_t cmd;
 	volatile uint32_t addr;
-	volatile uint32_t len_sr;
+	volatile uint32_t len;
+	volatile uint32_t sr;
 } uspispy_t;
 
 #define uspi ((uspispy_t*) 0x04000000)
@@ -112,6 +113,44 @@ static inline uint32_t rdcycle(void)
 }
 
 
+static void spi_flash(
+	const uint8_t cmd,
+	uint32_t addr,
+	uint32_t len,
+	uint32_t sr
+)
+{
+	const bool write_enabled = sr & 2;
+
+	if (cmd == 0x20) {
+		// erase command; make sure address is valid and write enabled
+		if (len != 0x04 || !write_enabled) {
+			uspi->sr = 0;
+			return;
+		}
+
+		// should take control of the appropriate RAM chip and do stuff
+		// then reset the status register
+		print("SR=0\n");
+		uspi->sr = 0;
+		return;
+	}
+
+	if (cmd == 0x02) {
+		if (len <= 0x04 || !write_enabled) {
+			uspi->sr = 0;
+			return;
+		}
+
+		// write command; address is original address
+		// len includes extra 4 bytes
+		// should read len-4 bytes from psram, AND it with the buffer
+		// and then write it back to the psram
+		print("WRITE\n");
+		uspi->sr = 0;
+	}
+}
+
 void main()
 {
 	reg_leds = 31;
@@ -141,15 +180,25 @@ void main()
 		if (cmd == last_cmd)
 			continue;
 
+		const uint32_t addr = uspi->addr;
+		const uint32_t len = uspi->len;
+		const uint8_t sr = uspi->sr;
+		
+
 		print_hex(cmd >> 8, 6);
 		print_char(' ');
 		print_hex(cmd & 0xFF, 2);
 		print_char(' ');
-		print_hex(uspi->addr, 6);
+		print_hex(addr, 6);
 		print_char(' ');
-		print_hex(uspi->len_sr >> 8, 4);
+		print_hex(len, 4);
+		print_char(' ');
+		print_hex(sr, 2);
 		print_char('\n');
+
 		last_cmd = cmd;
 		last_report = now;
+
+		spi_flash(cmd & 0xFF, addr, len, sr);
 	}
 }
