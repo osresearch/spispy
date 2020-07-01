@@ -34,6 +34,7 @@ extern uint32_t sram;
 #define reg_wbuf (*(volatile uint32_t*)0x04100000)
 
 typedef struct {
+	volatile uint32_t counter;
 	volatile uint32_t cmd;
 	volatile uint32_t addr;
 	volatile uint32_t len_sr;
@@ -41,17 +42,17 @@ typedef struct {
 
 #define uspi ((uspispy_t*) 0x04000000)
 
-void putchar(char c)
+void print_char(char c)
 {
 	if (c == '\n')
-		putchar('\r');
+		print_char('\r');
 	reg_uart_data = c;
 }
 
 void print(const char *p)
 {
 	while (*p)
-		putchar(*(p++));
+		print_char(*(p++));
 }
 
 void print_hex(uint32_t v, int digits)
@@ -59,7 +60,7 @@ void print_hex(uint32_t v, int digits)
 	for (int i = 7; i >= 0; i--) {
 		char c = "0123456789abcdef"[(v >> (4*i)) & 15];
 		if (c == '0' && i >= digits) continue;
-		putchar(c);
+		print_char(c);
 		digits = i;
 	}
 }
@@ -71,36 +72,36 @@ void print_dec(uint32_t v)
 		return;
 	}
 
-	if      (v >= 900) { putchar('9'); v -= 900; }
-	else if (v >= 800) { putchar('8'); v -= 800; }
-	else if (v >= 700) { putchar('7'); v -= 700; }
-	else if (v >= 600) { putchar('6'); v -= 600; }
-	else if (v >= 500) { putchar('5'); v -= 500; }
-	else if (v >= 400) { putchar('4'); v -= 400; }
-	else if (v >= 300) { putchar('3'); v -= 300; }
-	else if (v >= 200) { putchar('2'); v -= 200; }
-	else if (v >= 100) { putchar('1'); v -= 100; }
+	if      (v >= 900) { print_char('9'); v -= 900; }
+	else if (v >= 800) { print_char('8'); v -= 800; }
+	else if (v >= 700) { print_char('7'); v -= 700; }
+	else if (v >= 600) { print_char('6'); v -= 600; }
+	else if (v >= 500) { print_char('5'); v -= 500; }
+	else if (v >= 400) { print_char('4'); v -= 400; }
+	else if (v >= 300) { print_char('3'); v -= 300; }
+	else if (v >= 200) { print_char('2'); v -= 200; }
+	else if (v >= 100) { print_char('1'); v -= 100; }
 
-	if      (v >= 90) { putchar('9'); v -= 90; }
-	else if (v >= 80) { putchar('8'); v -= 80; }
-	else if (v >= 70) { putchar('7'); v -= 70; }
-	else if (v >= 60) { putchar('6'); v -= 60; }
-	else if (v >= 50) { putchar('5'); v -= 50; }
-	else if (v >= 40) { putchar('4'); v -= 40; }
-	else if (v >= 30) { putchar('3'); v -= 30; }
-	else if (v >= 20) { putchar('2'); v -= 20; }
-	else if (v >= 10) { putchar('1'); v -= 10; }
+	if      (v >= 90) { print_char('9'); v -= 90; }
+	else if (v >= 80) { print_char('8'); v -= 80; }
+	else if (v >= 70) { print_char('7'); v -= 70; }
+	else if (v >= 60) { print_char('6'); v -= 60; }
+	else if (v >= 50) { print_char('5'); v -= 50; }
+	else if (v >= 40) { print_char('4'); v -= 40; }
+	else if (v >= 30) { print_char('3'); v -= 30; }
+	else if (v >= 20) { print_char('2'); v -= 20; }
+	else if (v >= 10) { print_char('1'); v -= 10; }
 
-	if      (v >= 9) { putchar('9'); v -= 9; }
-	else if (v >= 8) { putchar('8'); v -= 8; }
-	else if (v >= 7) { putchar('7'); v -= 7; }
-	else if (v >= 6) { putchar('6'); v -= 6; }
-	else if (v >= 5) { putchar('5'); v -= 5; }
-	else if (v >= 4) { putchar('4'); v -= 4; }
-	else if (v >= 3) { putchar('3'); v -= 3; }
-	else if (v >= 2) { putchar('2'); v -= 2; }
-	else if (v >= 1) { putchar('1'); v -= 1; }
-	else putchar('0');
+	if      (v >= 9) { print_char('9'); v -= 9; }
+	else if (v >= 8) { print_char('8'); v -= 8; }
+	else if (v >= 7) { print_char('7'); v -= 7; }
+	else if (v >= 6) { print_char('6'); v -= 6; }
+	else if (v >= 5) { print_char('5'); v -= 5; }
+	else if (v >= 4) { print_char('4'); v -= 4; }
+	else if (v >= 3) { print_char('3'); v -= 3; }
+	else if (v >= 2) { print_char('2'); v -= 2; }
+	else if (v >= 1) { print_char('1'); v -= 1; }
+	else print_char('0');
 }
 
 static inline uint32_t rdcycle(void)
@@ -117,6 +118,14 @@ void main()
 	//reg_uart_clkdiv = 104; // 115200 baud = 12 MHz / 104
 	reg_uart_clkdiv = 139; // 115200 baud = 16 MHz / 139
 
+/*
+	while(1)
+	{
+		print_char('a');
+		reg_leds = ~reg_leds;
+	}
+*/
+
 	uint32_t last_report = 0;
 	uint32_t last_cmd = 0;
 	while(1)
@@ -124,6 +133,7 @@ void main()
 		const uint32_t now = rdcycle();
 		if (now - last_report > 16000000) {
 			last_report = now;
+			print_hex(uspi->counter, 8);
 			print("---\n");
 		}
 
@@ -131,8 +141,14 @@ void main()
 		if (cmd == last_cmd)
 			continue;
 
-		print_hex(cmd, 8);
-		putchar('\n');
+		print_hex(cmd >> 8, 6);
+		print_char(' ');
+		print_hex(cmd & 0xFF, 2);
+		print_char(' ');
+		print_hex(uspi->addr, 6);
+		print_char(' ');
+		print_hex(uspi->len_sr >> 8, 4);
+		print_char('\n');
 		last_cmd = cmd;
 		last_report = now;
 	}
