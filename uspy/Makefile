@@ -10,7 +10,7 @@ include Makefile.icestorm
 CROSS ?= /opt/riscv32i/bin/riscv32-unknown-elf-
 CFLAGS ?= -g -O3 -Wall
 
-firmware.elf: firmware.o picorv32/start.o
+firmware.elf: picorv32/start.o firmware.o
 
 %.o: %.c
 	$(CROSS)gcc \
