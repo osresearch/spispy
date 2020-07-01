@@ -120,23 +120,37 @@ module uspispy(
 	reg spi_cmd_done_flag = 0;
 
 	// synchronize the raw strobes from spi_clk to the clk domain
-	flag2strobe spi_cmd_sync(spi_cmd_done_flag, clk, spi_cmd_strobe);
+	reg spi_cmd_received;
+	reg spi_cmd_strobe_out = 0;
+	strobe2strobe spi_cmd_sync(spi_clk, spi_cmd_strobe_raw, clk, spi_cmd_strobe);
 	strobe2strobe spi_byte_sync(spi_clk, spi_byte_strobe_raw, clk, spi_byte_strobe_out);
 
 	// watch for a spi_cmd_strobe and a return to cs idle
 	wire spi_cs_rising;
-	edge spi_cs_edge(clk, spi_cs_in, spi_cs_rising);
-	assign spi_cmd_strobe_out = spi_cs_rising && spi_len_out != 0;
+	wire spi_cs_falling;
+	edge spi_cs_edge(clk, spi_cs_in, spi_cs_rising, spi_cs_falling);
 
 	always @(posedge clk)
 	begin
-		if (spi_cmd_strobe_out) begin
+		spi_cmd_strobe_out <= 0;
+
+		if (spi_cmd_strobe) begin
+			// this transaction has a valid command
+			spi_cmd_received <= 1;
+		end else
+		if (spi_cs_rising && spi_cmd_received) begin
+			// the transaction is over and had a valid command
+			// copy it to the output
+			spi_cmd_received <= 0;
+			spi_cmd_strobe_out <= 1;
 			spi_cmd_out <= spi_cmd;
 			spi_len_out <= spi_len;
 			spi_addr_out <= spi_addr;
+		end else
+		if (spi_cs_falling) begin
+			spi_cmd_received <= 0;
 		end
 	end
-
 
 	// decoder for the external SPI bus, from the PCH
 	qspi_raw qspi_raw0(
@@ -167,21 +181,17 @@ module uspispy(
 		// only write one byte per clk
 		write_strobe <= 0;
 		if (spi_cs_in) begin
-			// signal that we have a command, if we have one
-
 			// turn off any output drivers
 			spi_do_enable <= 4'b0000;
 
 			// reset the write address to the start of the buffer
 			write_addr <= 0;
-			spi_len <= 0;
 
 			// select both ram chips to be ready for a read command
 			ram1_enabled <= 1;
 			ram0_enabled <= 1;
 		end else
 		if (spi_cmd_strobe_raw) begin
-			spi_cmd_done_flag <= 0;
 			spi_cmd <= spi_byte_raw;
 			spi_byte_out <= spi_byte_raw;
 			spi_len <= 1;
