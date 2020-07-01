@@ -209,13 +209,14 @@ module top(
 		spi_write_buffer_read <= spi_write_buffer[iomem_addr[7:0]];
 	end
 
-	// record when the reception time of a spi command
-	reg [23:0] counter = 0;
+	// record when the reception time of a spi command, in microseconds
+	// clk == 16 MHz, so counter/16 == useconds
+	reg [27:0] counter = 0;
 	reg [23:0] spi_counter = 0;
 	always @(posedge clk) begin
 		counter <= counter + 1;
 		if (spi_cmd_strobe)
-			spi_counter <= counter;
+			spi_counter <= counter[27:4];
 	end
 
 
