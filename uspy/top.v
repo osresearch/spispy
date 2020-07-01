@@ -95,7 +95,7 @@ module top(
 	end
 
 	assign led_b = serial_rxd;
-	assign led_g = serial_txd;
+	assign led_g = !spi_cmd_strobe; // serial_txd;
 	assign led_r = !gpio[7]; // spi_cs_in; // negative logic
 
 	// physical pins for the three SPI ports
@@ -182,8 +182,8 @@ module top(
 	wire [31:0] spi_addr;
 	wire [11:0] spi_len;
 	wire [7:0] spi_sr;
-	reg [7:0] spi_sr_in;
-	reg spi_sr_strobe;
+	reg [7:0] spi_sr_in = 0;
+	reg spi_sr_strobe = 0;
 
 	// memory buffer for spi write commands; stores 8-bits at a time in spi_clk domain
 	// reads 32-bits at a time in clk domain
@@ -267,8 +267,8 @@ module top(
 
 	reg [31:0] gpio;
 
-	wire gpio_sel = iomem_addr[31:20] == 12'h030;
-	wire uspy_sel = iomem_addr[31:20] == 12'h040;
+	wire gpio_sel = iomem_addr[31:24] ==  8'h03;
+	wire uspy_sel = iomem_addr[31:24] ==  8'h04;
 	wire wbuf_sel = iomem_addr[31:20] == 12'h041;
 
 	always @(posedge clk) begin
@@ -279,7 +279,7 @@ module top(
 			gpio <= 0;
 		end else
 		if (!iomem_valid || iomem_ready) begin
-			iomem_ready <= 0;
+			// give it a cycle
 		end else
 		if (gpio_sel) begin
 			iomem_ready <= 1;
@@ -292,21 +292,27 @@ module top(
 		if (uspy_sel) begin
 			iomem_ready <= 1;
 			case(iomem_addr[7:0])
-			8'h00: iomem_rdata <= { spi_counter, spi_cmd };
-			8'h04: iomem_rdata <= { spi_addr };
-			8'h08: begin
+			8'h00: iomem_rdata <= { 8'h00, counter };
+			8'h04: iomem_rdata <= { spi_counter, spi_cmd };
+			8'h08: iomem_rdata <= { spi_addr };
+			8'h0c: begin
 				iomem_rdata <= { spi_len, spi_sr };
 				if (iomem_wstrb[0]) begin
 					spi_sr_in <= iomem_wdata[7:0];
 					spi_sr_strobe <= 1;
 				end
 			end
+			default: iomem_rdata <= 32'hDECAFBAD;
 			endcase
 		end else
 		if (wbuf_sel) begin
 			// read from the SPI write buffer
 			iomem_ready <= 1;
 			iomem_rdata <= spi_write_buffer_read;
+		end else begin
+			// unknown memory mapped device; give it a bad value
+			iomem_ready <= 0;
+			iomem_rdata <= 32'hDECAFBAD;
 		end
 	end
 
