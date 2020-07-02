@@ -26,6 +26,8 @@
 `include "picorv32/simpleuart.v"
 `include "picorv32/picosoc.v"
 `include "picorv32/picorv32.v"
+`include "spi_controller.v"
+`include "spi_controller_iomem.v"
 
 module top(
 	output serial_txd,
@@ -219,7 +221,6 @@ module top(
 			spi_counter <= counter[27:4];
 	end
 
-
 	uspispy uspi(
 		.clk(clk),
 		.reset(reset),
@@ -259,62 +260,79 @@ module top(
 		.ram1_do_enable(ram1_do_enable),
 	);
 
+	wire spi0_sel;
+	wire [31:0] spi0_rdata;
+	wire spi0_ready;
+
+	spi_controller_iomem spi0_iomem(
+		.clk(clk),
+		.reset(!resetn),
+		.spi_data_in(0),
+		.sel(spi0_sel),
+		.wstrb(iomem_wstrb),
+		.wdata(iomem_wdata),
+		.rdata(spi0_rdata),
+		.ready(spi0_ready),
+	);
+
+	wire gpio_sel;
+	reg [31:0] gpio;
+	wire gpio_ready = 1;
+	wire [31:0] gpio_rdata = gpio;
+
+	wire uspy_sel;
+	reg uspy_ready;
+	reg [31:0] uspy_rdata;
+
+	wire gpio_sel = iomem_valid && iomem_addr[31:20] == 12'h030;
+	wire uspy_sel = iomem_valid && iomem_addr[31:20] == 12'h040;
+	wire spi0_sel = iomem_valid && iomem_addr[31:20] == 12'h050;
+
 	wire        iomem_valid;
-	reg         iomem_ready;
-	wire [3:0]  iomem_wstrb;
+	wire [ 3:0] iomem_wstrb;
 	wire [31:0] iomem_addr;
 	wire [31:0] iomem_wdata;
-	reg  [31:0] iomem_rdata;
+	wire [31:0] iomem_rdata =
+		gpio_sel ? gpio_rdata :
+		uspy_sel ? uspy_rdata :
+		spi0_sel ? spi0_rdata :
+		0;
+	wire        iomem_ready =
+		gpio_sel ? gpio_ready :
+		uspy_sel ? uspy_ready :
+		spi0_sel ? spi0_ready :
+		0;
 
-	reg [31:0] gpio;
-
-	wire gpio_sel = iomem_addr[31:24] ==  8'h03;
-	wire uspy_sel = iomem_addr[31:24] ==  8'h04;
-	wire wbuf_sel = iomem_addr[31:20] == 12'h041;
 
 	always @(posedge clk) begin
-		spi_sr_strobe <= 0;
-		iomem_ready <= 0;
+		uspy_ready <= 0;
 
 		if (!resetn) begin
 			gpio <= 0;
 		end else
-		if (!iomem_valid || iomem_ready) begin
-			// give it a cycle
-		end else
 		if (gpio_sel) begin
-			iomem_ready <= 1;
-			iomem_rdata <= gpio;
 			if (iomem_wstrb[0]) gpio[ 7: 0] <= iomem_wdata[ 7: 0];
 			if (iomem_wstrb[1]) gpio[15: 8] <= iomem_wdata[15: 8];
 			if (iomem_wstrb[2]) gpio[23:16] <= iomem_wdata[23:16];
 			if (iomem_wstrb[3]) gpio[31:24] <= iomem_wdata[31:24];
 		end else
 		if (uspy_sel) begin
-			iomem_ready <= 1;
+			spi_sr_strobe <= 0;
+			uspy_ready <= 1;
 			case(iomem_addr[7:0])
-			8'h00: iomem_rdata <= { 4'h0, counter };
-			8'h04: iomem_rdata <= { spi_counter, spi_cmd };
-			8'h08: iomem_rdata <= { spi_addr };
-			8'h0c: iomem_rdata <= { 20'h00000, spi_len };
+			8'h00: uspy_rdata <= { 4'h0, counter };
+			8'h04: uspy_rdata <= { spi_counter, spi_cmd };
+			8'h08: uspy_rdata <= { spi_addr };
+			8'h0c: uspy_rdata <= { 20'h00000, spi_len };
 			8'h10: begin
-				iomem_rdata <= { 24'h000000, spi_sr };
+				uspy_rdata <= { 24'h000000, spi_sr };
 				if (iomem_wstrb[0]) begin
 					spi_sr_in <= iomem_wdata[7:0];
 					spi_sr_strobe <= 1;
 				end
 			end
-			default: iomem_rdata <= 32'hDECAFBAD;
+			default: uspy_rdata <= 32'hDECAFBAD;
 			endcase
-		end else
-		if (wbuf_sel) begin
-			// read from the SPI write buffer
-			iomem_ready <= 1;
-			iomem_rdata <= spi_write_buffer_read;
-		end else begin
-			// unknown memory mapped device; give it a bad value
-			iomem_ready <= 0;
-			iomem_rdata <= 32'hDECAFBAD;
 		end
 	end
 
