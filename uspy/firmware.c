@@ -41,7 +41,19 @@ typedef struct {
 	volatile uint32_t sr;
 } uspispy_t;
 
-#define uspi ((uspispy_t*) 0x04000000)
+typedef union {
+	volatile uint32_t cr;
+	struct {
+		volatile uint32_t data:8, mode:8, unused:15, idle:1;
+	} bytes;
+	struct {
+		volatile uint32_t data_mode:16, unused:15, idle:1;
+	} words;
+} spi_controller_t;
+
+
+#define uspi ((uspispy_t*)        0x04000000)
+#define spi0 ((spi_controller_t*) 0x05000000)
 
 void print_char(char c)
 {
@@ -112,6 +124,14 @@ static inline uint32_t rdcycle(void)
 	return cycles;
 }
 
+static void usleep(uint32_t usec)
+{
+	const uint32_t cycles = usec * 16;
+	const uint32_t start = rdcycle();
+	while((rdcycle() - start) < cycles)
+		;
+}
+
 
 static void spi_flash(
 	const uint8_t cmd,
@@ -123,7 +143,7 @@ static void spi_flash(
 	const bool write_enabled = sr & 2;
 
 	if (cmd == 0x20) {
-		// erase command; make sure address is valid and write enabled
+		// erase command; make sure address is idle and write enabled
 		if (len != 0x04 || !write_enabled) {
 			uspi->sr = 0;
 			return;
@@ -151,12 +171,58 @@ static void spi_flash(
 	}
 }
 
-void main()
+int main(void)
 {
 	reg_leds = 31;
 	//reg_uart_clkdiv = 104; // 115200 baud = 12 MHz / 104
 	reg_uart_clkdiv = 139; // 115200 baud = 16 MHz / 139
 
+	/* test the spi controller */
+	while(1)
+	{
+		print("--- ");
+		spi0->bytes.mode = 0
+			| 0x00 // !SPI_CS
+			| 0x10 // SPI_MODE1
+			| 0x01 // drive on D0
+			;
+
+		print_hex(spi0->cr, 8);
+		print_char(' ');
+
+		// ensure the spi hardware is idle
+		while (!spi0->bytes.idle)
+			;
+
+		spi0->bytes.data = 0x9F;
+
+		while (!spi0->bytes.idle)
+			;
+
+		spi0->bytes.data = 0x00;
+
+		while (!spi0->bytes.idle)
+			;
+		print_hex(spi0->bytes.data, 2);
+
+		spi0->bytes.data = 0x00;
+		while (!spi0->bytes.idle)
+			;
+		print_hex(spi0->bytes.data, 2);
+
+		spi0->bytes.data = 0x00;
+		while (!spi0->bytes.idle)
+			;
+		print_hex(spi0->bytes.data, 2);
+
+		spi0->bytes.mode = 0
+			| 0x80 // !SPI_CS == high, turn off chip
+			| 0x10 // SPI_MODE1
+			| 0x00 // no drive
+			;
+		print("\n");
+		usleep(1000000);
+	}
 /*
 	while(1)
 	{

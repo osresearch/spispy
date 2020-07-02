@@ -248,11 +248,13 @@ module top(
 		.spi_do(spi_do),
 		.spi_do_enable(spi_do_enable),
 		// psram physical interfaces
+/*
 		.ram0_clk(ram0_clk_pin),
 		.ram0_cs(ram0_cs_pin),
 		.ram0_di(ram0_di),
 		.ram0_do(ram0_do),
 		.ram0_do_enable(ram0_do_enable),
+*/
 		.ram1_clk(ram1_clk_pin),
 		.ram1_cs(ram1_cs_pin),
 		.ram1_di(ram1_di),
@@ -267,8 +269,15 @@ module top(
 	spi_controller_iomem spi0_iomem(
 		.clk(clk),
 		.reset(!resetn),
-		.spi_data_in(0),
+		// physical
+		.spi_data_in(ram0_di),
+		.spi_data_out(ram0_do),
+		.spi_data_enable(ram0_do_enable),
+		.spi_cs(ram0_cs_pin),
+		.spi_clk(ram0_clk_pin),
+		// iomem logical
 		.sel(spi0_sel),
+		.addr(iomem_addr[7:0]),
 		.wstrb(iomem_wstrb),
 		.wdata(iomem_wdata),
 		.rdata(spi0_rdata),
