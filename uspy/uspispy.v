@@ -128,7 +128,7 @@ module uspispy(
 	// watch for a spi_cmd_strobe and a return to cs idle
 	wire spi_cs_rising;
 	wire spi_cs_falling;
-	edge spi_cs_edge(clk, spi_cs_in, spi_cs_rising, spi_cs_falling);
+	edge_detect spi_cs_edge(clk, spi_cs_in, spi_cs_rising, spi_cs_falling);
 
 	always @(posedge clk)
 	begin

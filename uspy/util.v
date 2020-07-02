@@ -220,7 +220,7 @@ endmodule
 /*
  * Syncronize an input into clk domain and output the rising/falling edges.
  */
-module edge(
+module edge_detect(
 	input clk,
 	input in,
 	output rising,
