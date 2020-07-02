@@ -2,6 +2,7 @@
 all: top.bin
 
 TEST-y += test-qspi
+TEST-y += test-spi_controller
 
 top.bin: firmware.hex
 
