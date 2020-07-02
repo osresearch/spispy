@@ -3,6 +3,7 @@ all: top.bin
 
 TEST-y += test-qspi
 TEST-y += test-spi_controller
+TEST-y += test-spi_controller_iomem
 
 top.bin: firmware.hex
 

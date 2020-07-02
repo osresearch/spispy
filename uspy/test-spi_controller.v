@@ -38,7 +38,7 @@ module top();
 	reg [7:0] spi_byte_tx = 0;
 	reg [2:0] spi_mode = 1;
 	reg spi_byte_tx_strobe = 0;
-	wire spi_byte_rx_strobe;
+	wire spi_idle;
 
 	spi_controller spi_controller_i(
 		.clk(clk),
@@ -47,12 +47,12 @@ module top();
 		.spi_clk(spi_clk),
 		.spi_data_in(spi_data),
 		.spi_data_out(spi_data_out),
-		.spi_mode(spi_mode),
+		.spi_mode_in(spi_mode),
 		// logical
 		.spi_byte_tx_strobe(spi_byte_tx_strobe),
 		.spi_byte_tx(spi_byte_tx),
 		.spi_byte_rx(spi_byte_rx),
-		.spi_byte_rx_strobe(spi_byte_rx_strobe)
+		.spi_idle(spi_idle)
 	);
 
 	reg started = 0;
@@ -63,7 +63,7 @@ module top();
 		if (reset) begin
 			started <= 0;
 		end else
-		if (spi_byte_rx_strobe)
+		if (spi_idle && !spi_byte_tx_strobe)
 		begin
 			$display("rx=%02x", spi_byte_rx);
 			spi_byte_tx <= spi_byte_tx + 1;

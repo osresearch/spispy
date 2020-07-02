@@ -3,6 +3,7 @@
  */
 `ifndef _spi_controller_iomem_v_
 `define _spi_controller_iomem_v_
+`include "spi_controller.v"
 
 module spi_controller_iomem(
 	input clk,
@@ -29,9 +30,8 @@ module spi_controller_iomem(
 	reg [2:0] spi_mode;
 	reg [7:0] spi_byte_tx;
 	wire [7:0] spi_byte_rx;
-	reg rx_byte_valid;
 	reg spi_byte_tx_strobe;
-	wire spi_byte_rx_strobe;
+	wire spi_idle;
 
 	spi_controller spi_i(
 		.clk(clk),
@@ -41,23 +41,26 @@ module spi_controller_iomem(
 		.spi_data_in(spi_data_in),
 		.spi_data_out(spi_data_out),
 
-		.spi_mode(spi_mode),
+		.spi_mode_in(spi_mode),
 		.spi_byte_tx_strobe(spi_byte_tx_strobe),
-		.spi_byte_rx_strobe(spi_byte_rx_strobe),
 		.spi_byte_tx(spi_byte_tx),
 		.spi_byte_rx(spi_byte_rx),
+		.spi_idle(spi_idle)
 	);
 
 	// this one is always ready
 	assign ready = 1;
 	assign rdata = {
-		rx_byte_valid,	// 31:31
+		spi_idle, // 31:31
 		15'h0000,
 		spi_cs,		// 15:15
 		spi_mode,	// 14:12
 		spi_data_enable, // 11:8
 		spi_byte_rx	// 7:0
 	};
+
+	//assign spi_byte_tx = wdata[7:0];
+	//assign spi_byte_tx_strobe = sel && addr == 0 && wstrb[0];
 
 	always @(posedge clk)
 	begin
@@ -67,15 +70,10 @@ module spi_controller_iomem(
 		begin
 			spi_cs <= 1;
 			spi_data_enable <= 0;
-			rx_byte_valid <= 0;
 		end
 
-		// when the transaction is over, update the bit
-		if (spi_byte_rx_strobe)
-			rx_byte_valid <= 1;
-
 		// only one address to write to
-		if (sel && !ready && addr == 0)
+		if (sel && addr == 0)
 		begin
 			// allow per-byte updates to the various parts of the cr
 			// top bits are not writeable
@@ -90,7 +88,6 @@ module spi_controller_iomem(
 				// start a new transfer if this is a write to the bottom byte
 				spi_byte_tx <= wdata[7:0];
 				spi_byte_tx_strobe <= 1;
-				rx_byte_valid <= 0;
 			end
 		end
 	end
