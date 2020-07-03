@@ -23,6 +23,8 @@
 
 #  define MEM_TOTAL 0x20000 /* 128 KB */
 
+#define NULL ((void*) 0)
+
 // a pointer to this is a null pointer, but the compiler does not
 // know that because "sram" is a linker symbol from sections.lds.
 extern uint32_t sram;
@@ -171,6 +173,48 @@ static void spi_flash(
 	}
 }
 
+static inline uint8_t spi_transfer(
+	uint8_t tx
+)
+{
+	uint32_t cr;
+	spi0->bytes.data = tx;
+	do {
+		cr = spi0->cr;
+	} while (cr & 0x80000000);
+
+	return cr & 0xFF;
+}
+
+static void spi_command(
+	uint8_t cmd,
+	uint8_t * buf,
+	unsigned len
+)
+{
+	spi0->bytes.mode = 0
+		| 0x00 // !SPI_CS
+		| 0x10 // SPI_MODE1
+		| 0x01 // drive on D0
+		;
+
+	spi_transfer(cmd);
+
+	for(unsigned i = 0 ; i < len ; i++)
+		buf[i] = spi_transfer(0x00);
+
+	asm("nop");
+	asm("nop");
+	asm("nop");
+	asm("nop");
+
+	spi0->bytes.mode = 0
+		| 0x80 // !SPI_CS == high, turn off chip
+		| 0x10 // SPI_MODE1
+		| 0x00 // no drive
+		;
+}
+
 int main(void)
 {
 	reg_leds = 31;
@@ -181,45 +225,18 @@ int main(void)
 	while(1)
 	{
 		print("--- ");
-		spi0->bytes.mode = 0
-			| 0x00 // !SPI_CS
-			| 0x10 // SPI_MODE1
-			| 0x01 // drive on D0
-			;
 
-		print_hex(spi0->cr, 8);
-		print_char(' ');
+	// reset enable, followed by reset
+	spi_command(0x66, NULL, 0);
+	spi_command(0x99, NULL, 0);
 
-		// ensure the spi hardware is idle
-		while (!spi0->bytes.idle)
-			;
+		// 0x9F == RDID
+		uint8_t data[16];
+		spi_command(0x9F, data, sizeof(data));
 
-		spi0->bytes.data = 0x9F;
+		for(int i = 0 ; i < sizeof(data) ; i++)
+			print_hex(data[i], 2);
 
-		while (!spi0->bytes.idle)
-			;
-
-		spi0->bytes.data = 0x00;
-
-		while (!spi0->bytes.idle)
-			;
-		print_hex(spi0->bytes.data, 2);
-
-		spi0->bytes.data = 0x00;
-		while (!spi0->bytes.idle)
-			;
-		print_hex(spi0->bytes.data, 2);
-
-		spi0->bytes.data = 0x00;
-		while (!spi0->bytes.idle)
-			;
-		print_hex(spi0->bytes.data, 2);
-
-		spi0->bytes.mode = 0
-			| 0x80 // !SPI_CS == high, turn off chip
-			| 0x10 // SPI_MODE1
-			| 0x00 // no drive
-			;
 		print("\n");
 		usleep(1000000);
 	}
