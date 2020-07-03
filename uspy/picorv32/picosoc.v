@@ -103,7 +103,8 @@ module picosoc (
 	wire [3:0] mem_wstrb;
 	wire [31:0] mem_rdata;
 
-	reg ram_ready;
+	wire ram_valid = mem_valid && mem_addr < 4*MEM_WORDS;
+	reg ram_ready = 0;
 	wire [31:0] ram_rdata;
 
 	assign iomem_valid = mem_valid && (mem_addr[31:24] > 8'h 01);
@@ -118,7 +119,8 @@ module picosoc (
 	wire [31:0] spimemio_cfgreg_do;
 `endif
 `ifdef PICOSOC_BRAM
-	reg bram_ready;
+	reg bram_ready = 0;
+	wire bram_valid = mem_valid && mem_addr[31:20] == 12'h001;
 	wire [31:0] bram_rdata;
 `endif
 
@@ -130,9 +132,9 @@ module picosoc (
 	wire        simpleuart_reg_dat_wait;
 
 	assign mem_ready = (iomem_valid && iomem_ready)
-		|| ram_ready
+		|| (ram_valid && ram_ready)
 `ifdef PICOSOC_BRAM
-		|| bram_ready
+		|| (bram_valid && bram_ready)
 `endif
 `ifdef SPIMEMIO
 		|| spimem_ready
@@ -143,9 +145,9 @@ module picosoc (
 
 	assign mem_rdata =
 		(iomem_valid && iomem_ready) ? iomem_rdata
-		: ram_ready ? ram_rdata
+		: (ram_valid && ram_ready) ? ram_rdata
 `ifdef PICOSOC_BRAM
-		: bram_ready ? bram_rdata
+		: (bram_valid && bram_ready) ? bram_rdata
 `endif
 `ifdef SPIMEMIO
 		: spimem_ready ? spimem_rdata
@@ -230,35 +232,34 @@ module picosoc (
 		.reg_dat_wait(simpleuart_reg_dat_wait)
 	);
 
-	always @(posedge clk)
-		ram_ready <= mem_valid && !mem_ready && mem_addr < 4*MEM_WORDS;
-
 	`PICOSOC_MEM #(
 		.WORDS(MEM_WORDS)
 	) memory (
 		.clk(clk),
-		.wen((mem_valid && !mem_ready && mem_addr < 4*MEM_WORDS) ? mem_wstrb : 4'b0),
+		.wen(ram_valid ? mem_wstrb : 4'b0),
 		.addr(mem_addr[23:2]),
 		.wdata(mem_wdata),
 		.rdata(ram_rdata)
 	);
 
+	always @(posedge clk)
+		ram_ready <= ram_valid && !ram_ready;
+
 `ifdef PICOSOC_BRAM
 	// map some BRAM at 0x0010_0000
 	// xxd -c4 icebreaker_fw.bin | awk '{print $2}' > upduino2_fw.hex
-	wire bram_sel = mem_valid && !mem_ready && mem_addr[31:20] == 12'h001;
 	picosoc_mem
 		#(.WORDS(2048))
 	bram(
 		.clk(clk),
-		.wen(bram_sel ? mem_wstrb : 4'b0),
+		.wen(bram_valid ? mem_wstrb : 4'b0),
 		.addr(mem_addr[23:2]),
 		.wdata(mem_wdata),
 		.rdata(bram_rdata)
 	);
 
 	always @(posedge clk)
-		bram_ready <= bram_sel;
+		bram_ready <= bram_valid && !bram_ready;
 `endif
 endmodule
 
