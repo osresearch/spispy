@@ -120,7 +120,9 @@ module top(
 	wire spi_cs_enable;
 	wire spi_cs_in;
 	wire spi_cs_out;
-	wire spi_clk;
+	wire spi_clk_in;
+	wire spi_clk_out = 0;
+	wire spi_clk_enable = 0; // always input for now
 
 	SB_IO #(
 		.PIN_TYPE(6'b1010_01), // tristatable outputs
@@ -142,13 +144,13 @@ module top(
 		.D_OUT_0(spi_cs_out),
 	);
 
-	// unidirectional for the clk pin
 	SB_IO #(
 		.PIN_TYPE(6'b1010_01),
 	) spi_clk_buffer(
 		.PACKAGE_PIN(spi_clk_pin),
-		.OUTPUT_ENABLE(0),
-		.D_IN_0(spi_clk),
+		.OUTPUT_ENABLE(spi_clk_enable),
+		.D_IN_0(spi_clk_in),
+		.D_OUT_0(spi_clk_out),
 	);
 
 
@@ -165,6 +167,17 @@ module top(
 		.D_OUT_0(ram0_do),
 	);
 
+	// ram0 cs and clk are always output
+	wire ram0_cs_out;
+	wire ram0_clk_out;
+	SB_IO #(
+		.PIN_TYPE(6'b1010_01) // tristatable outputs
+	) ram0_cs_buffer[1:0] (
+		.OUTPUT_ENABLE(2'b11),
+		.PACKAGE_PIN({ram0_cs_pin, ram0_clk_pin}),
+		.D_OUT_0({ram0_cs_out, ram0_clk_out}),
+	);
+
 	// bidirectional pins for the ram1 data
 	wire [3:0] ram1_di;
 	wire [3:0] ram1_do;
@@ -177,6 +190,18 @@ module top(
 		.D_IN_0(ram1_di),
 		.D_OUT_0(ram1_do),
 	);
+
+	// ram1 cs and clk are always output
+	wire ram1_cs_out;
+	wire ram1_clk_out;
+	SB_IO #(
+		.PIN_TYPE(6'b1010_01) // tristatable outputs
+	) ram1_cs_buffer[1:0] (
+		.OUTPUT_ENABLE(2'b11),
+		.PACKAGE_PIN({ram1_cs_pin, ram1_clk_pin}),
+		.D_OUT_0({ram1_cs_out, ram1_clk_out}),
+	);
+
 
 	// spi logical interface for logging and slow command emulation
 	wire spi_cmd_strobe;
@@ -195,7 +220,7 @@ module top(
 	reg [31:0] spi_write_buffer[0:63];
 	reg [31:0] spi_write_buffer_read;
 
-	always @(posedge spi_clk) begin
+	always @(posedge spi_clk_in) begin
 		if (!spi_write_strobe) begin
 			// nothing to do
 		end else
@@ -240,7 +265,7 @@ module top(
 		.write_strobe(spi_write_strobe),
 
 		// spi bus physical interface
-		.spi_clk(spi_clk),
+		.spi_clk(spi_clk_in),
 		.spi_cs_in(spi_cs_in),
 		.spi_cs_out(spi_cs_out),
 		.spi_cs_enable(spi_cs_enable),
@@ -249,17 +274,17 @@ module top(
 		.spi_do_enable(spi_do_enable),
 		// psram physical interfaces
 /*
-		.ram0_clk(ram0_clk_pin),
-		.ram0_cs(ram0_cs_pin),
+		.ram0_clk(ram0_clk_out),
+		.ram0_cs(ram0_cs_out),
 		.ram0_di(ram0_di),
 		.ram0_do(ram0_do),
 		.ram0_do_enable(ram0_do_enable),
-*/
-		.ram1_clk(ram1_clk_pin),
-		.ram1_cs(ram1_cs_pin),
+		.ram1_clk(ram1_clk_out),
+		.ram1_cs(ram1_cs_out),
 		.ram1_di(ram1_di),
 		.ram1_do(ram1_do),
 		.ram1_do_enable(ram1_do_enable),
+*/
 	);
 
 	wire spi0_sel;
@@ -270,11 +295,11 @@ module top(
 		.clk(clk),
 		.reset(!resetn),
 		// physical
-		.spi_data_in(ram0_di),
-		.spi_data_out(ram0_do),
-		.spi_data_enable(ram0_do_enable),
-		.spi_cs(ram0_cs_pin),
-		.spi_clk(ram0_clk_pin),
+		.spi_data_in(ram1_di),
+		.spi_data_out(ram1_do),
+		.spi_data_enable(ram1_do_enable),
+		.spi_cs(ram1_cs_out),
+		.spi_clk(ram1_clk_out),
 		// iomem logical
 		.sel(spi0_sel),
 		.addr(iomem_addr[7:0]),
