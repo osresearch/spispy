@@ -24,6 +24,7 @@
 #  define MEM_TOTAL 0x20000 /* 128 KB */
 
 #define NULL ((void*) 0)
+typedef uint32_t size_t;
 
 // a pointer to this is a null pointer, but the compiler does not
 // know that because "sram" is a linker symbol from sections.lds.
@@ -178,41 +179,155 @@ static inline uint8_t spi_transfer(
 )
 {
 	uint32_t cr;
+	while(!spi0->bytes.idle)
+		;
+
 	spi0->bytes.data = tx;
 	do {
 		cr = spi0->cr;
-	} while (cr & 0x80000000);
+	} while ((cr & 0x80000000) == 0);
 
+	//return (spi0->cr & 0xFF);
 	return cr & 0xFF;
+}
+
+
+#define SPI_MODE_NONE	0x91
+#define SPI_MODE_SINGLE 0x11
+#define SPI_MODE_QUAD_IN 0x40
+#define SPI_MODE_QUAD_OUT 0x4F
+
+static inline void spi_cs_mode(uint8_t mode)
+{
+	// ensure that a transfer has finished before changing the mode
+	while(!spi0->bytes.idle)
+		;
+
+	spi0->bytes.mode = mode;
 }
 
 static void spi_command(
 	uint8_t cmd,
 	uint8_t * buf,
-	unsigned len
+	size_t len
 )
 {
-	spi0->bytes.mode = 0
-		| 0x00 // !SPI_CS
-		| 0x10 // SPI_MODE1
-		| 0x01 // drive on D0
-		;
-
+	spi_cs_mode(SPI_MODE_SINGLE);
 	spi_transfer(cmd);
 
-	for(unsigned i = 0 ; i < len ; i++)
+	for(size_t i = 0 ; i < len ; i++)
 		buf[i] = spi_transfer(0x00);
 
-	asm("nop");
-	asm("nop");
-	asm("nop");
-	asm("nop");
+	spi_cs_mode(SPI_MODE_NONE);
+}
 
-	spi0->bytes.mode = 0
-		| 0x80 // !SPI_CS == high, turn off chip
-		| 0x10 // SPI_MODE1
-		| 0x00 // no drive
-		;
+void psram_erase(
+	uint32_t addr,
+	size_t len
+)
+{
+	spi_cs_mode(SPI_MODE_SINGLE);
+	spi_transfer(0x02);
+	spi_transfer((addr >> 16) && 0xFF);
+	spi_transfer((addr >>  8) && 0xFF);
+	spi_transfer((addr >>  0) && 0xFF);
+
+	for(unsigned i = 0 ; i < len ; i++)
+		spi_transfer(0xFF);
+
+	spi_cs_mode(SPI_MODE_NONE);
+}
+
+void psram_write(
+	uint32_t addr,
+	const void * p,
+	size_t len
+)
+{
+	const uint8_t * const buf = p;
+
+	spi_cs_mode(SPI_MODE_SINGLE);
+	spi_transfer(0x02);
+
+	spi_transfer((addr >> 16) & 0xFF);
+	spi_transfer((addr >>  8) & 0xFF);
+	spi_transfer((addr >>  0) & 0xFF);
+
+	for(unsigned i = 0 ; i < len ; i++)
+		spi_transfer(buf[i]);
+
+	spi_cs_mode(SPI_MODE_NONE);
+}
+
+void psram_read(
+	uint32_t addr,
+	void * p,
+	size_t len
+)
+{
+	uint8_t * const buf = p;
+
+	spi_cs_mode(SPI_MODE_SINGLE);
+	spi_transfer(0x03);
+
+	spi_transfer((addr >> 16) & 0xFF);
+	spi_transfer((addr >>  8) & 0xFF);
+	spi_transfer((addr >>  0) & 0xFF);
+
+	for(unsigned i = 0 ; i < len ; i++)
+		buf[i] = spi_transfer(0);
+
+	spi_cs_mode(SPI_MODE_NONE);
+}
+
+void psram_quad_write(
+	uint32_t addr,
+	const void * p,
+	size_t len
+)
+{
+	const uint8_t * const buf = p;
+
+	spi_cs_mode(SPI_MODE_SINGLE);
+	spi_transfer(0x38);
+
+	spi_cs_mode(SPI_MODE_QUAD_OUT);
+	spi_transfer((addr >> 16) & 0xFF);
+	spi_transfer((addr >>  8) & 0xFF);
+	spi_transfer((addr >>  0) & 0xFF);
+
+	for(unsigned i = 0 ; i < len ; i++)
+		spi_transfer(buf[i]);
+
+	spi_cs_mode(SPI_MODE_NONE);
+}
+
+void psram_quad_read(
+	uint32_t addr,
+	void * p,
+	size_t len
+)
+{
+	uint8_t * const buf = p;
+
+	spi_cs_mode(SPI_MODE_SINGLE);
+	spi_transfer(0xEB);
+
+	spi_cs_mode(SPI_MODE_QUAD_OUT);
+	spi_transfer((addr >> 16) & 0xFF);
+	spi_transfer((addr >>  8) & 0xFF);
+	spi_transfer((addr >>  0) & 0xFF);
+
+	// dummy cycles
+	spi_cs_mode(SPI_MODE_QUAD_IN);
+	spi_transfer(0x00);
+	spi_transfer(0x00);
+	spi_transfer(0x00);
+
+	for(unsigned i = 0 ; i < len ; i++)
+		buf[i] = spi_transfer(i);
+
+	spi_cs_mode(SPI_MODE_NONE);
 }
 
 int main(void)
@@ -221,24 +336,83 @@ int main(void)
 	//reg_uart_clkdiv = 104; // 115200 baud = 12 MHz / 104
 	reg_uart_clkdiv = 139; // 115200 baud = 16 MHz / 139
 
+	// force some clocks with !CS high since the datasheet says so
+	spi_cs_mode(0x90);
+	spi_transfer(0x00);
+	spi_cs_mode(SPI_MODE_NONE);
+
+	// psram reset enable, followed by reset command
+	spi_command(0x66, NULL, 0);
+	spi_command(0x99, NULL, 0);
+
 	/* test the spi controller */
+	unsigned iter = 0;
+	uint8_t buf[16];
+	uint8_t buf2[32];
+
 	while(1)
 	{
 		print("--- ");
 
-	// reset enable, followed by reset
-	spi_command(0x66, NULL, 0);
-	spi_command(0x99, NULL, 0);
-
 		// 0x9F == RDID
-		uint8_t data[16];
+		if (1) {
+		uint8_t data[0xC];
 		spi_command(0x9F, data, sizeof(data));
 
-		for(int i = 0 ; i < sizeof(data) ; i++)
+		for(int i = 4 ; i < sizeof(data) ; i++)
 			print_hex(data[i], 2);
 
-		print("\n");
-		usleep(1000000);
+		print_char(' ');
+		}
+		print_hex(iter, 8);
+		print_char(' ');
+
+		// fill the ram with a random sequence and read it back
+		for(unsigned i = 0 ; i < sizeof(buf) ; i++)
+		{
+			buf[i] = i ^ iter;
+			buf2[i] = 0;
+		}
+
+		psram_erase(iter * sizeof(buf), 4096);
+		psram_write(iter * sizeof(buf), buf, sizeof(buf));
+
+		psram_read(iter * sizeof(buf), buf2, sizeof(buf2));
+		
+		int fail = 0;
+		for(unsigned i = 0 ; i < sizeof(buf) ; i++)
+		{
+			if (buf[i] == buf2[i])
+				continue;
+			//print_hex(i, 2);
+			//print_hex(buf[i], 2);
+			//print_hex(buf2[i], 2);
+			//print_char(' ');
+			fail = 1;
+		}
+
+		if (fail) {
+			print_char('\n');
+			for(unsigned i = 0 ; i < sizeof(buf2) ; i++)
+			{
+				if ((i & 0x0F) == 0) print_char(' ');
+				print_hex(buf2[i], 2);
+			}
+
+			// re-read the buffer
+			print_char('\n');
+			psram_read(iter * sizeof(buf), buf, sizeof(buf));
+			for(unsigned i = 0 ; i < sizeof(buf) ; i++)
+			{
+				if ((i & 0x0F) == 0) print_char(' ');
+				print_hex(buf[i], 2);
+			}
+			print(" FAIL\n");
+		} else
+			print("pass\n");
+
+		usleep(100000);
+		iter++;
 	}
 /*
 	while(1)
