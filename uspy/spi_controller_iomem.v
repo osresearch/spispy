@@ -15,6 +15,7 @@ module spi_controller_iomem(
 	input [3:0] spi_data_in,
 	output [3:0] spi_data_out,
 	output [3:0] spi_data_enable,
+	output [1:0] spi_sel, // which device to select
 
 	// iomem interface
 	input sel,
@@ -26,9 +27,10 @@ module spi_controller_iomem(
 	output [31:0] rdata
 );
 	reg spi_cs = 1;
-	reg [3:0] spi_data_enable;
-	reg [2:0] spi_mode;
+	reg [3:0] spi_data_enable = 0;
+	reg [2:0] spi_mode = 1;
 	reg [7:0] spi_byte_tx;
+	reg [1:0] spi_sel = 0;
 	wire [7:0] spi_byte_rx;
 	reg spi_byte_tx_strobe;
 	wire spi_idle;
@@ -52,7 +54,9 @@ module spi_controller_iomem(
 	assign ready = 1;
 	assign rdata = {
 		spi_idle, // 31:31
-		15'h0000,
+		7'h0000,
+		6'h0000,
+		spi_sel,	// 17:16
 		spi_cs,		// 15:15
 		spi_mode,	// 14:12
 		spi_data_enable, // 11:8
@@ -71,6 +75,7 @@ module spi_controller_iomem(
 		if (reset)
 		begin
 			spi_cs <= 1;
+			spi_sel <= 2'b11;
 			spi_data_enable <= 0;
 		end
 
@@ -80,7 +85,9 @@ module spi_controller_iomem(
 			// allow per-byte updates to the various parts of the cr
 			// top bits are not writeable
 			//if (wstrb[3]) cr[31:24] <= wdata[31:24];
-			//if (wstrb[2]) cr[23:16] <= wdata[23:16];
+			if (wstrb[2]) begin
+				spi_sel <= wdata[17:16];
+			end
 			if (wstrb[1]) begin
 				spi_cs <= wdata[15];
 				spi_mode <= wdata[14:12];

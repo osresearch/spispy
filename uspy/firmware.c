@@ -47,10 +47,10 @@ typedef struct {
 typedef union {
 	volatile uint32_t cr;
 	struct {
-		volatile uint32_t data:8, mode:8, unused:15, idle:1;
+		volatile uint32_t data:8, mode:8, sel:2, unused:13, idle:1;
 	} bytes;
 	struct {
-		volatile uint32_t data_mode:16, unused:15, idle:1;
+		volatile uint32_t data_mode:16, sel_idle:16;
 	} words;
 } spi_controller_t;
 
@@ -337,6 +337,8 @@ int main(void)
 	reg_uart_clkdiv = 139; // 115200 baud = 16 MHz / 139
 
 	// force some clocks with !CS high since the datasheet says so
+	spi0->bytes.sel = 0;
+
 	spi_cs_mode(0x90);
 	spi_transfer(0x00);
 	spi_cs_mode(SPI_MODE_NONE);

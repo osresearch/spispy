@@ -246,6 +246,17 @@ module top(
 			spi_counter <= counter[27:4];
 	end
 
+	wire [3:0] uspi_ram0_di = ram0_di;
+	wire [3:0] uspi_ram0_do;
+	wire [3:0] uspi_ram0_do_enable;
+	wire       uspi_ram0_cs;
+	wire       uspi_ram0_clk;
+	wire [3:0] uspi_ram1_di = ram0_di;
+	wire [3:0] uspi_ram1_do;
+	wire [3:0] uspi_ram1_do_enable;
+	wire       uspi_ram1_cs;
+	wire       uspi_ram1_clk;
+
 	uspispy uspi(
 		.clk(clk),
 		.reset(reset),
@@ -272,34 +283,80 @@ module top(
 		.spi_di(spi_di),
 		.spi_do(spi_do),
 		.spi_do_enable(spi_do_enable),
+
 		// psram physical interfaces
-/*
-		.ram0_clk(ram0_clk_out),
-		.ram0_cs(ram0_cs_out),
-		.ram0_di(ram0_di),
-		.ram0_do(ram0_do),
-		.ram0_do_enable(ram0_do_enable),
-		.ram1_clk(ram1_clk_out),
-		.ram1_cs(ram1_cs_out),
-		.ram1_di(ram1_di),
-		.ram1_do(ram1_do),
-		.ram1_do_enable(ram1_do_enable),
-*/
+		.ram0_clk(uspi_ram0_clk),
+		.ram0_cs(uspi_ram0_cs),
+		.ram0_di(uspi_ram0_di),
+		.ram0_do(uspi_ram0_do),
+		.ram0_do_enable(uspi_ram0_do_enable),
+
+		.ram1_clk(uspi_ram1_clk),
+		.ram1_cs(uspi_ram1_cs),
+		.ram1_di(uspi_ram1_di),
+		.ram1_do(uspi_ram1_do),
+		.ram1_do_enable(uspi_ram1_do_enable),
 	);
 
 	wire spi0_sel;
 	wire [31:0] spi0_rdata;
 	wire spi0_ready;
 
-	spi_controller_iomem spi0_iomem(
+	wire [1:0] spi_controller_sel;
+	wire [3:0] spi_controller_di;  //= spi_controller_sel[0] ? ram1_di : ram0_di;
+	wire [3:0] spi_controller_do;  //= spi_controller_sel[0] ? ram1_do : ram0_do;
+	wire [3:0] spi_controller_do_enable;  //= spi_controller_sel[0] ? ram1_do_enable : ram0_do_enable;
+	wire spi_controller_cs; // = spi_controller_sel[0] ? ram1_cs_out : ram0_cs_out;
+	wire spi_controller_clk;  //= spi_controller_sel[0] ? ram1_clk_out : ram0_clk_out;
+
+/*
+	always @(*)
+	case(spi_controller_sel)
+		2'b00: begin
+			spi_controller_di = ram0_di;
+			ram0_do = spi_controller_do;
+			ram0_do_enable = spi_controller_do_enable;
+			ram0_cs_out = spi_controller_cs;
+			ram0_clk_out = spi_controller_clk;
+		end
+		2'b01: begin
+			spi_controller_di = ram1_di;
+			ram1_do = spi_controller_do;
+			ram1_do_enable = spi_controller_do_enable;
+			ram1_cs_out = spi_controller_cs;
+			ram1_clk_out = spi_controller_clk;
+		end
+	endcase
+*/
+	assign spi_controller_di =
+		spi_controller_sel == 2'b00 ? ram0_di :
+		spi_controller_sel == 2'b01 ? ram1_di :
+		4'bXXXX;
+
+	assign ram0_cs_out = spi_controller_sel == 2'b00 ? spi_controller_cs : uspi_ram0_cs;
+	assign ram1_cs_out = spi_controller_sel == 2'b01 ? spi_controller_cs : uspi_ram1_cs;
+
+	assign ram0_clk_out = spi_controller_sel == 2'b00 ? spi_controller_clk : uspi_ram0_clk;
+	assign ram1_clk_out = spi_controller_sel == 2'b01 ? spi_controller_clk : uspi_ram1_clk;
+
+	assign ram0_do = spi_controller_sel == 2'b00 ? spi_controller_do : uspi_ram0_do;
+	assign ram1_do = spi_controller_sel == 2'b01 ? spi_controller_do : uspi_ram1_do;
+
+	assign ram0_do_enable = spi_controller_sel == 2'b00 ? spi_controller_do_enable : uspi_ram0_do_enable;
+	assign ram1_do_enable = spi_controller_sel == 2'b01 ? spi_controller_do_enable : uspi_ram1_do_enable;
+
+	//assign ram0_di = spi_controller_sel == 2'b00 ? spi_controller_do : uspi_ram0_do;
+
+	spi_controller_iomem spi_iomem(
 		.clk(clk),
 		.reset(!resetn),
 		// physical
-		.spi_data_in(ram0_di),
-		.spi_data_out(ram0_do),
-		.spi_data_enable(ram0_do_enable),
-		.spi_cs(ram0_cs_out),
-		.spi_clk(ram0_clk_out),
+		.spi_data_in(spi_controller_di),
+		.spi_data_out(spi_controller_do),
+		.spi_data_enable(spi_controller_do_enable),
+		.spi_cs(spi_controller_cs),
+		.spi_clk(spi_controller_clk),
+		.spi_sel(spi_controller_sel),
 		// iomem logical
 		.sel(spi0_sel),
 		.addr(iomem_addr[7:0]),
