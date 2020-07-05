@@ -4,6 +4,7 @@ all: top.bin
 TEST-y += test-qspi
 TEST-y += test-spi_controller
 TEST-y += test-spi_controller_iomem
+TEST-y += test-reset
 
 top.bin: firmware.hex
 
@@ -18,6 +19,8 @@ firmware.elf: picorv32/start.o firmware.o
 	$(CROSS)gcc \
 		$(CFLAGS) \
 		-march=rv32ic \
+		-nostdlib \
+		-ffreestanding \
 		-Wp,-MMD,$(dir $@).$(notdir $@).d \
 		-Wp,-MT,$@ \
 		-c -o $@ $<
