@@ -295,11 +295,11 @@ module top(
 		.clk(clk),
 		.reset(!resetn),
 		// physical
-		.spi_data_in(ram1_di),
-		.spi_data_out(ram1_do),
-		.spi_data_enable(ram1_do_enable),
-		.spi_cs(ram1_cs_out),
-		.spi_clk(ram1_clk_out),
+		.spi_data_in(ram0_di),
+		.spi_data_out(ram0_do),
+		.spi_data_enable(ram0_do_enable),
+		.spi_cs(ram0_cs_out),
+		.spi_clk(ram0_clk_out),
 		// iomem logical
 		.sel(spi0_sel),
 		.addr(iomem_addr[7:0]),
