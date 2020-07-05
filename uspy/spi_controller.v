@@ -36,7 +36,7 @@ module spi_controller(
 	output spi_idle
 );
 	reg running = 0;
-	reg spi_clk = 1;
+	reg spi_clk = 0;
 	reg [7:0] byte_rx = 0;
 	reg [7:0] byte_tx = 0;
 	reg [2:0] bits = 0;
@@ -73,8 +73,8 @@ module spi_controller(
 		spi_mode == 4 ? byte_rx_4_next :
 		8'bXXXXXXXX;
 
-	assign spi_byte_rx = byte_rx_next;
-	assign spi_idle = bits_next == 0;
+	assign spi_byte_rx = byte_rx;
+	assign spi_idle = bits == 0 && !running;
 
 	always @(posedge clk)
 	begin
@@ -97,13 +97,13 @@ module spi_controller(
 			if (spi_clk == 1) begin
 				// clock OUT bytes on the falling edge
 				byte_tx <= byte_tx_next;
-				bits <= bits_next;
 			end else begin
  				// clock IN bits on the rising edge
 				byte_rx <= byte_rx_next;
+				bits <= bits_next;
+				running <= bits_next != 0;
 			end
 
-			running <= bits_next != 0;
 		end else begin
 			spi_clk <= 0;
 		end

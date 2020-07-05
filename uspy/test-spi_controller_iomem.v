@@ -30,7 +30,7 @@ module top();
 	wire spi_clk;
 	wire spi_cs;
 
-	reg [3:0] spi_data = 4'b0000;
+	wire [3:0] spi_data;
 	wire [3:0] spi_data_out;
 	wire [3:0] spi_data_enable;
 
@@ -59,11 +59,36 @@ module top();
 
 	reg started = 0;
 
+	reg [31:0] incoming_data = 32'hA55A810F;
+	assign spi_data[1] = incoming_data[31];
+
+	always @(negedge spi_clk)
+	begin
+		if (reset) begin
+			// nothing
+		end else if (!spi_cs)
+			incoming_data <= incoming_data << 1;
+	end
+
 	always
 	begin
 		#105
 		wdata = 32'h0000_12_A5;
 		wstrb = 4'b1111;
+		sel <= 1;
+		#10
+		sel <= 0;
+
+		#180
+		wdata = 32'h0000_12_5A;
+		wstrb = 4'b0001;
+		sel <= 1;
+		#10
+		sel <= 0;
+
+		#180
+		wdata = 32'h0000_12_99;
+		wstrb = 4'b0001;
 		sel <= 1;
 		#10
 		sel <= 0;

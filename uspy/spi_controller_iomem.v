@@ -25,7 +25,7 @@ module spi_controller_iomem(
 	output ready,
 	output [31:0] rdata
 );
-	reg spi_cs;
+	reg spi_cs = 1;
 	reg [3:0] spi_data_enable;
 	reg [2:0] spi_mode;
 	reg [7:0] spi_byte_tx;
@@ -61,6 +61,8 @@ module spi_controller_iomem(
 
 	//assign spi_byte_tx = wdata[7:0];
 	//assign spi_byte_tx_strobe = sel && addr == 0 && wstrb[0];
+
+	reg spi_idle_prev = 0;
 
 	always @(posedge clk)
 	begin

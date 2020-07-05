@@ -7,8 +7,8 @@
 `include "util.v"
 
 module top();
-	reg clk;
-	reg reset;
+	reg clk = 0;
+	reg reset = 1;
 
 	initial begin
 		$dumpfile("test-spi_controller.vcd");
@@ -30,7 +30,7 @@ module top();
 	wire spi_clk;
 	reg spi_cs = 1;
 
-	reg [3:0] spi_data = 4'b0000;
+	wire [3:0] spi_data;
 	wire [3:0] spi_data_out;
 
 	wire [7:0] spi_byte_rx;
@@ -75,6 +75,19 @@ module top();
 			spi_cs <= 0;
 			spi_byte_tx <= 8'hA5;
 			spi_byte_tx_strobe <= 1;
+		end
+	end
+
+	reg [7:0] incoming_data = 8'hA5;
+	assign spi_data[1] = incoming_data[7];
+
+	always @(negedge spi_clk)
+	begin
+		if (reset) begin
+			// nothing
+		end else
+		if (!spi_cs) begin
+			incoming_data <= incoming_data << 1;
 		end
 	end
 
