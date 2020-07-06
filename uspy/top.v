@@ -218,9 +218,11 @@ module top(
 	wire [7:0] spi_write_data;
 	wire [7:0] spi_write_addr;
 	reg [31:0] spi_write_buffer[0:63];
-	reg [31:0] spi_write_buffer_read;
+	reg [31:0] wbuf_rdata;
+	reg wbuf_ready;
 
 	always @(posedge spi_clk_in) begin
+		// writes are byte at a time
 		if (!spi_write_strobe) begin
 			// nothing to do
 		end else
@@ -233,7 +235,9 @@ module top(
 	end
 
 	always @(posedge clk) begin
-		spi_write_buffer_read <= spi_write_buffer[iomem_addr[7:0]];
+		// reads are 32-bits at a time and always ready (but not always valid...)
+		wbuf_rdata <= spi_write_buffer[iomem_addr[7:2]];
+		wbuf_ready <= wbuf_sel;
 	end
 
 	// record when the reception time of a spi command, in microseconds
@@ -251,7 +255,8 @@ module top(
 	wire [3:0] uspi_ram0_do_enable;
 	wire       uspi_ram0_cs;
 	wire       uspi_ram0_clk;
-	wire [3:0] uspi_ram1_di = ram0_di;
+
+	wire [3:0] uspi_ram1_di = ram1_di;
 	wire [3:0] uspi_ram1_do;
 	wire [3:0] uspi_ram1_do_enable;
 	wire       uspi_ram1_cs;
@@ -303,11 +308,11 @@ module top(
 	wire spi0_ready;
 
 	wire [1:0] spi_controller_sel;
-	reg [3:0] spi_controller_di;  //= spi_controller_sel[0] ? ram1_di : ram0_di;
-	wire [3:0] spi_controller_do;  //= spi_controller_sel[0] ? ram1_do : ram0_do;
-	wire [3:0] spi_controller_do_enable;  //= spi_controller_sel[0] ? ram1_do_enable : ram0_do_enable;
-	wire spi_controller_cs; // = spi_controller_sel[0] ? ram1_cs_out : ram0_cs_out;
-	wire spi_controller_clk;  //= spi_controller_sel[0] ? ram1_clk_out : ram0_clk_out;
+	reg [3:0] spi_controller_di;
+	wire [3:0] spi_controller_do;
+	wire [3:0] spi_controller_do_enable;
+	wire spi_controller_cs;
+	wire spi_controller_clk;
 
 	always @(*) begin
 		spi_controller_di <= 4'bXXXX;
@@ -342,6 +347,7 @@ module top(
 	spi_controller_iomem spi_iomem(
 		.clk(clk),
 		.reset(!resetn),
+
 		// physical
 		.spi_data_in(spi_controller_di),
 		.spi_data_out(spi_controller_do),
@@ -349,6 +355,7 @@ module top(
 		.spi_cs(spi_controller_cs),
 		.spi_clk(spi_controller_clk),
 		.spi_sel(spi_controller_sel),
+
 		// iomem logical
 		.sel(spi0_sel),
 		.addr(iomem_addr[7:0]),
@@ -369,6 +376,7 @@ module top(
 
 	wire gpio_sel = iomem_valid && iomem_addr[31:20] == 12'h030;
 	wire uspy_sel = iomem_valid && iomem_addr[31:20] == 12'h040;
+	wire wbuf_sel = iomem_valid && iomem_addr[31:20] == 12'h041;
 	wire spi0_sel = iomem_valid && iomem_addr[31:20] == 12'h050;
 
 	wire        iomem_valid;
@@ -386,6 +394,10 @@ module top(
 		if (uspy_sel) begin
 			iomem_rdata <= uspy_rdata;
 			iomem_ready <= uspy_ready;
+		end else
+		if (wbuf_sel) begin
+			iomem_rdata <= wbuf_rdata;
+			iomem_ready <= wbuf_ready;
 		end else
 		if (spi0_sel) begin
 			iomem_rdata <= spi0_rdata;

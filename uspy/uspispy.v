@@ -109,7 +109,7 @@ module uspispy(
 	// select which output goes to the PCH
 	reg read_in_progress = 0;
 	wire output_fpga = !read_in_progress;
-	wire output_ram = spi_addr[23]; // select which RAM based on the top bit
+	reg output_ram = 0; // spi_addr[23]; // select which RAM based on the top bit
 	wire [3:0] spi_do_fpga;
 	assign spi_do = output_fpga ? spi_do_fpga : output_ram ? ram1_di : ram0_di;
 
@@ -194,8 +194,9 @@ module uspispy(
 			// turn off any output drivers
 			spi_do_enable <= 4'b0000;
 
-			// reset the write address to the start of the buffer
-			write_addr <= 0;
+			// reset the write address to the end of the buffer;
+			// it will be pre-incremented and wrap
+			write_addr <= ~0;
 
 			// flag that any read is done, so the FPGA becomes the
 			// default output on the DO pins
@@ -235,7 +236,6 @@ module uspispy(
 			SPI_CMD_READ: begin
 				// a read has started!
 				// route the read command to any of the PSRAM
-				read_in_progress <= 1;
 				ram0_enabled <= 1;
 				ram1_enabled <= 1;
 			end
@@ -279,10 +279,15 @@ module uspispy(
 					spi_byte_tx <= spi_id[7:0];
 			end
 			SPI_CMD_READ: begin
+				if (spi_len == 1) begin
+					// select the correct PSRAM chip based on the leading bit
+					output_ram <= spi_byte_raw[7];
+				end else
 				if (spi_len == 3) begin
 					// enable our output pin, which will be routed
 					// from the appropriate RAM chip
 					spi_do_enable <= 4'b0010;
+					read_in_progress <= 1;
 				end else
 				if (spi_len > 3) begin
 					// update the read address for each byte that is strobed
@@ -293,6 +298,7 @@ module uspispy(
 			SPI_CMD_PP3: begin
 				if (spi_len > 3) begin
 					// store the byte into the write buffer
+					// ignore if !WP is set; the firmware will check it
 					write_addr <= write_addr + 1;
 					write_data <= spi_byte_raw;
 					write_strobe <= 1;
