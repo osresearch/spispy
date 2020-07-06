@@ -34,7 +34,6 @@ extern uint32_t sram;
 #define reg_uart_data (*(volatile uint32_t*)0x02000008)
 #define reg_leds (*(volatile uint32_t*)0x03000000)
 #define reg_uspi (*(volatile uint32_t*)0x04000000)
-#define reg_wbuf (*(volatile uint32_t*)0x04100000)
 
 typedef struct {
 	volatile uint32_t counter;
@@ -56,6 +55,7 @@ typedef union {
 
 
 #define uspi ((uspispy_t*)        0x04000000)
+#define uspi_wbuf ((volatile uint32_t*)0x04100000)
 #define spi0 ((spi_controller_t*) 0x05000000)
 
 void print_char(char c)
@@ -135,44 +135,6 @@ static void usleep(uint32_t usec)
 		;
 }
 
-
-static void spi_flash(
-	const uint8_t cmd,
-	uint32_t addr,
-	uint32_t len,
-	uint32_t sr
-)
-{
-	const bool write_enabled = sr & 2;
-
-	if (cmd == 0x20) {
-		// erase command; make sure address is idle and write enabled
-		if (len != 0x04 || !write_enabled) {
-			uspi->sr = 0;
-			return;
-		}
-
-		// should take control of the appropriate RAM chip and do stuff
-		// then reset the status register
-		print("SR=0\n");
-		uspi->sr = 0;
-		return;
-	}
-
-	if (cmd == 0x02) {
-		if (len <= 0x04 || !write_enabled) {
-			uspi->sr = 0;
-			return;
-		}
-
-		// write command; address is original address
-		// len includes extra 4 bytes
-		// should read len-4 bytes from psram, AND it with the buffer
-		// and then write it back to the psram
-		print("WRITE\n");
-		uspi->sr = 0;
-	}
-}
 
 static inline uint8_t spi_transfer(
 	uint8_t tx
@@ -330,23 +292,132 @@ void psram_quad_read(
 	spi_cs_mode(SPI_MODE_NONE);
 }
 
+static void spi_flash(
+	const uint8_t cmd,
+	uint32_t addr,
+	uint32_t len,
+	uint32_t sr
+)
+{
+	const bool write_enabled = sr & 2;
+
+	if (cmd == 0x20) {
+		// erase command; make sure address is idle and write enabled
+		if (len != 0x04 || !write_enabled) {
+			print("WP, ignore\n");
+			uspi->sr = 0;
+			return;
+		}
+
+		// take control of the appropriate PSRAM chip (based on the top bit
+		// of the address), erase the data in the aligned block by setting it to 0xFF,
+		// and then reset the status register
+		spi0->bytes.sel = (addr >> 23) & 0x3;
+		psram_erase(addr & 0x7FFFF0, 4096);
+		spi0->bytes.sel = 3; // no device
+
+		print("ERASE SR=0\n");
+		uspi->sr = 0;
+		return;
+	}
+
+	if (cmd == 0x02) {
+		if (len <= 0x04 || !write_enabled) {
+			print("WP, ignore\n");
+			uspi->sr = 0;
+			return;
+		}
+
+		len -= 4; // remove command byte and 3-byte address from length of write
+
+		// write command; address is original address
+		// len includes extra 4 bytes
+		// select the appropriate PSRAM, read len-4 bytes from psram, AND it with the buffer
+		// to emulate the NAND flash behaviour, and then write it back to the psram.
+		// TODO: what if this crosses a page? should emulate that function
+		if (len > 256)
+			len = 256;
+
+		uint32_t buf[64];
+		print("WRITE ");
+		print_hex((addr >> 23) & 0x3, 1);
+		print(" ");
+		print_hex(len, 2);
+
+		spi0->bytes.sel = (addr >> 23) & 0x3;
+		psram_read(addr, buf, len);
+
+		// read the write buffer 4-bytes at a time
+		for(unsigned i = 0 ; i < len ; i+=4)
+		{
+			buf[i >> 2] &= uspi_wbuf[i >> 2];
+			//buf[i >> 2] = 0xAF;
+		}
+
+		psram_write(addr, buf, len);
+
+		// unselect the SPI controller
+		spi0->bytes.sel = 3;
+
+		print(" DONE\n");
+		uspi->sr = 0;
+	}
+}
+
 int main(void)
 {
-	reg_leds = 31;
+	reg_leds = 0x80; // gpio7 == red
 	//reg_uart_clkdiv = 104; // 115200 baud = 12 MHz / 104
 	reg_uart_clkdiv = 139; // 115200 baud = 16 MHz / 139
 
-	// force some clocks with !CS high since the datasheet says so
-	spi0->bytes.sel = 0;
-
-	spi_cs_mode(0x90);
-	spi_transfer(0x00);
+	reg_leds = 0xFF;
+	print("REBOOT\n");
 	spi_cs_mode(SPI_MODE_NONE);
+	reg_leds = 0;
 
+	// send the reset command to each of the PSRAM chips
 	// psram reset enable, followed by reset command
-	spi_command(0x66, NULL, 0);
-	spi_command(0x99, NULL, 0);
+	// then query to be sure that the RDID command works and
+	// that there is a valid chip there
+	for(unsigned sel = 0 ; sel < 2 ; sel++)
+	{
+		spi0->bytes.sel = sel;
+		spi_command(0x66, NULL, 0);
+		spi_command(0x99, NULL, 0);
 
+		uint8_t data[0xC];
+		spi_command(0x9F, data, sizeof(data));
+
+		if (data[4] != 0x5D || data[5] != 0x52)
+		{
+			for(int i = 0 ; i < 4 ; i++)
+			{
+				print_hex(sel, 2);
+				print(" RDID failed\n");
+				usleep(1000000);
+			}
+		}
+	}
+
+	// write a bunch of data
+	print("INITIALIZING\n");
+	spi0->bytes.sel = 0;
+	psram_erase(0x0, 256);
+	psram_write(0x0, "0123456789abcdef", 16);
+
+	spi0->bytes.sel = 1;
+	psram_erase(0x0, 256);
+	psram_write(0x0, "fedcba9876543210", 16);
+	psram_write(0x10, "fedcba9876543210", 16);
+
+// 11100100111000001101110011011000110101001101000011001100110010
+//  110010011 0000011011 0011011000110101001101000011001100110010001
+
+	// turn off the SPI controller so that the PSRAM chips are
+	// bridges through the uspi logic
+	spi0->bytes.sel = 3;
+
+#if 0
 	/* test the spi controller */
 	unsigned iter = 0;
 	uint8_t buf[16];
@@ -426,6 +497,7 @@ int main(void)
 		reg_leds = ~reg_leds;
 	}
 */
+#endif
 
 	uint32_t last_report = 0;
 	uint32_t last_cmd = 0;
@@ -462,5 +534,9 @@ int main(void)
 		last_report = now;
 
 		spi_flash(cmd & 0xFF, addr, len, sr);
+
+		// ensure that no SPI device is enabled
+		spi_cs_mode(SPI_MODE_NONE);
+		spi0->bytes.sel = 3;
 	}
 }
