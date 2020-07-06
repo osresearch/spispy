@@ -156,8 +156,8 @@ module top(
 
 	// bidirectional pins for the ram0 data
 	wire [3:0] ram0_di;
-	wire [3:0] ram0_do;
-	wire [3:0] ram0_do_enable;
+	reg [3:0] ram0_do;
+	reg [3:0] ram0_do_enable;
 	SB_IO #(
 		.PIN_TYPE(6'b1010_01) // tristatable outputs
 	) ram0_data_buffer[3:0] (
@@ -168,8 +168,8 @@ module top(
 	);
 
 	// ram0 cs and clk are always output
-	wire ram0_cs_out;
-	wire ram0_clk_out;
+	reg ram0_cs_out;
+	reg ram0_clk_out;
 	SB_IO #(
 		.PIN_TYPE(6'b1010_01) // tristatable outputs
 	) ram0_cs_buffer[1:0] (
@@ -180,8 +180,8 @@ module top(
 
 	// bidirectional pins for the ram1 data
 	wire [3:0] ram1_di;
-	wire [3:0] ram1_do;
-	wire [3:0] ram1_do_enable;
+	reg [3:0] ram1_do;
+	reg [3:0] ram1_do_enable;
 	SB_IO #(
 		.PIN_TYPE(6'b1010_01) // tristatable outputs
 	) ram1_data_buffer[3:0] (
@@ -192,8 +192,8 @@ module top(
 	);
 
 	// ram1 cs and clk are always output
-	wire ram1_cs_out;
-	wire ram1_clk_out;
+	reg ram1_cs_out;
+	reg ram1_clk_out;
 	SB_IO #(
 		.PIN_TYPE(6'b1010_01) // tristatable outputs
 	) ram1_cs_buffer[1:0] (
@@ -303,49 +303,41 @@ module top(
 	wire spi0_ready;
 
 	wire [1:0] spi_controller_sel;
-	wire [3:0] spi_controller_di;  //= spi_controller_sel[0] ? ram1_di : ram0_di;
+	reg [3:0] spi_controller_di;  //= spi_controller_sel[0] ? ram1_di : ram0_di;
 	wire [3:0] spi_controller_do;  //= spi_controller_sel[0] ? ram1_do : ram0_do;
 	wire [3:0] spi_controller_do_enable;  //= spi_controller_sel[0] ? ram1_do_enable : ram0_do_enable;
 	wire spi_controller_cs; // = spi_controller_sel[0] ? ram1_cs_out : ram0_cs_out;
 	wire spi_controller_clk;  //= spi_controller_sel[0] ? ram1_clk_out : ram0_clk_out;
 
-/*
-	always @(*)
-	case(spi_controller_sel)
-		2'b00: begin
-			spi_controller_di = ram0_di;
-			ram0_do = spi_controller_do;
-			ram0_do_enable = spi_controller_do_enable;
-			ram0_cs_out = spi_controller_cs;
-			ram0_clk_out = spi_controller_clk;
+	always @(*) begin
+		spi_controller_di <= 4'bXXXX;
+
+		if (spi_controller_sel == 2'b00) begin
+			spi_controller_di <= ram0_di;
+			ram0_clk_out	<= spi_controller_clk;
+			ram0_cs_out	<= spi_controller_cs;
+			ram0_do		<= spi_controller_do;
+			ram0_do_enable	<= spi_controller_do_enable;
+		end else begin
+			ram0_clk_out	<= uspi_ram0_clk;
+			ram0_cs_out	<= uspi_ram0_cs;
+			ram0_do		<= uspi_ram0_do;
+			ram0_do_enable	<= uspi_ram0_do_enable;
 		end
-		2'b01: begin
-			spi_controller_di = ram1_di;
-			ram1_do = spi_controller_do;
-			ram1_do_enable = spi_controller_do_enable;
-			ram1_cs_out = spi_controller_cs;
-			ram1_clk_out = spi_controller_clk;
+
+		if (spi_controller_sel == 2'b01) begin
+			spi_controller_di <= ram1_di;
+			ram1_clk_out	<= spi_controller_clk;
+			ram1_cs_out	<= spi_controller_cs;
+			ram1_do		<= spi_controller_do;
+			ram1_do_enable	<= spi_controller_do_enable;
+		end else begin
+			ram1_clk_out	<= uspi_ram1_clk;
+			ram1_cs_out	<= uspi_ram1_cs;
+			ram1_do		<= uspi_ram1_do;
+			ram1_do_enable	<= uspi_ram1_do_enable;
 		end
-	endcase
-*/
-	assign spi_controller_di =
-		spi_controller_sel == 2'b00 ? ram0_di :
-		spi_controller_sel == 2'b01 ? ram1_di :
-		4'bXXXX;
-
-	assign ram0_cs_out = spi_controller_sel == 2'b00 ? spi_controller_cs : uspi_ram0_cs;
-	assign ram1_cs_out = spi_controller_sel == 2'b01 ? spi_controller_cs : uspi_ram1_cs;
-
-	assign ram0_clk_out = spi_controller_sel == 2'b00 ? spi_controller_clk : uspi_ram0_clk;
-	assign ram1_clk_out = spi_controller_sel == 2'b01 ? spi_controller_clk : uspi_ram1_clk;
-
-	assign ram0_do = spi_controller_sel == 2'b00 ? spi_controller_do : uspi_ram0_do;
-	assign ram1_do = spi_controller_sel == 2'b01 ? spi_controller_do : uspi_ram1_do;
-
-	assign ram0_do_enable = spi_controller_sel == 2'b00 ? spi_controller_do_enable : uspi_ram0_do_enable;
-	assign ram1_do_enable = spi_controller_sel == 2'b01 ? spi_controller_do_enable : uspi_ram1_do_enable;
-
-	//assign ram0_di = spi_controller_sel == 2'b00 ? spi_controller_do : uspi_ram0_do;
+	end
 
 	spi_controller_iomem spi_iomem(
 		.clk(clk),
@@ -383,17 +375,27 @@ module top(
 	wire [ 3:0] iomem_wstrb;
 	wire [31:0] iomem_addr;
 	wire [31:0] iomem_wdata;
-	wire [31:0] iomem_rdata =
-		gpio_sel ? gpio_rdata :
-		uspy_sel ? uspy_rdata :
-		spi0_sel ? spi0_rdata :
-		0;
-	wire        iomem_ready =
-		gpio_sel ? gpio_ready :
-		uspy_sel ? uspy_ready :
-		spi0_sel ? spi0_ready :
-		0;
+	reg  [31:0] iomem_rdata;
+	reg         iomem_ready;
 
+	always @(*) begin
+		if (gpio_sel) begin
+			iomem_rdata <= gpio_rdata;
+			iomem_ready <= gpio_ready;
+		end else
+		if (uspy_sel) begin
+			iomem_rdata <= uspy_rdata;
+			iomem_ready <= uspy_ready;
+		end else
+		if (spi0_sel) begin
+			iomem_rdata <= spi0_rdata;
+			iomem_ready <= spi0_ready;
+		end else
+		begin
+			iomem_rdata <= 32'h00000000;
+			iomem_ready <= 0;
+		end
+	end
 
 	always @(posedge clk) begin
 		uspy_ready <= 0;
