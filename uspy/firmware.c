@@ -356,6 +356,9 @@ int main(void)
 	{
 		print("--- ");
 
+		// switch which RAM we're talking to every cycle
+		spi0->bytes.sel = iter & 1;
+
 		// 0x9F == RDID
 		if (1) {
 		uint8_t data[0xC];
