@@ -81,6 +81,11 @@ void print_hex(uint32_t v, int digits)
 	}
 }
 
+int getchar(void)
+{
+	return reg_uart_data;
+}
+
 void print_dec(uint32_t v)
 {
 	if (v >= 1000) {
@@ -242,7 +247,7 @@ void psram_read(
 	spi_cs_mode(SPI_MODE_NONE);
 }
 
-void psram_quad_write(
+static void psram_quad_write(
 	uint32_t addr,
 	const void * p,
 	size_t len
@@ -264,7 +269,7 @@ void psram_quad_write(
 	spi_cs_mode(SPI_MODE_NONE);
 }
 
-void psram_quad_read(
+static void psram_quad_read(
 	uint32_t addr,
 	void * p,
 	size_t len
@@ -292,14 +297,39 @@ void psram_quad_read(
 	spi_cs_mode(SPI_MODE_NONE);
 }
 
+
+static void print_psram(
+	uint32_t addr,
+	size_t len
+)
+{
+	if (len > 256)
+		len = 256;
+	uint8_t buf[len];
+	spi0->bytes.sel = (addr >> 23) & 0x3;
+	psram_read(addr, buf, len);
+	spi0->bytes.sel = 3;
+
+	print_hex(addr, 8);
+	for(size_t i = 0 ; i < len ; i++)
+	{
+		if ((i & 0xF) == 0)
+			print_char(' ');
+		print_hex(buf[i], 2);
+	}
+
+	print_char('\n');
+}
+
 static void spi_flash(
-	const uint8_t cmd,
+	const uint32_t cr,
 	uint32_t addr,
 	uint32_t len,
 	uint32_t sr
 )
 {
 	const bool write_enabled = sr & 2;
+	const uint8_t cmd = cr & 0xFF;
 
 	if (cmd == 0x20) {
 		// erase command; make sure address is idle and write enabled
@@ -315,9 +345,14 @@ static void spi_flash(
 		spi0->bytes.sel = (addr >> 23) & 0x3;
 		psram_erase(addr & 0x7FFFF0, 4096);
 		spi0->bytes.sel = 3; // no device
-
-		print("ERASE SR=0\n");
 		uspi->sr = 0;
+
+		print("ER ");
+		print_hex(addr, 6);
+		print_char(' ');
+		print_hex(len, 2);
+		print_char('\n');
+
 		return;
 	}
 
@@ -339,11 +374,6 @@ static void spi_flash(
 			len = 256;
 
 		uint32_t buf[64];
-		print("WRITE ");
-		print_hex((addr >> 23) & 0x3, 1);
-		print(" ");
-		print_hex(len, 2);
-
 		spi0->bytes.sel = (addr >> 23) & 0x3;
 		psram_read(addr, buf, len);
 
@@ -356,22 +386,54 @@ static void spi_flash(
 
 		psram_write(addr, buf, len);
 
-		// unselect the SPI controller
+		// unselect the SPI controller and mark this as done
 		spi0->bytes.sel = 3;
-
-		print(" DONE\n");
 		uspi->sr = 0;
+
+		print("WR ");
+		print_hex(addr, 6);
+		print_char(' ');
+		print_hex(len, 2);
+		print_char('\n');
+
+		return;
 	}
+
+	if (cmd == 0x03)
+	{
+		// actual read is handled by the FPGA
+		print("RD ");
+		print_hex(addr - len - 4, 6);
+		print_char(' ');
+		print_hex(len - 4, 3);
+		print_char('\n');
+		return;
+	}
+
+	print_hex(cr >> 8, 6);
+	print_char(' ');
+	print_hex(cmd, 2);
+	print_char(' ');
+	print_hex(addr, 6);
+	print_char(' ');
+	print_hex(len, 4);
+	print_char(' ');
+	print_hex(sr, 2);
+	print_char('\n');
 }
 
 int main(void)
 {
+reboot:
 	reg_leds = 0x80; // gpio7 == red
 	//reg_uart_clkdiv = 104; // 115200 baud = 12 MHz / 104
-	reg_uart_clkdiv = 139; // 115200 baud = 16 MHz / 139
+	//reg_uart_clkdiv = 139; // 115200 baud = 16 MHz / 139
+	reg_uart_clkdiv = 217; // 1 megabaud = 30 MHz / 30
 
 	reg_leds = 0xFF;
 	print("REBOOT\n");
+	spi0->bytes.sel = 3;
+	uspi->sr = 0;
 	spi_cs_mode(SPI_MODE_NONE);
 	reg_leds = 0;
 
@@ -382,6 +444,13 @@ int main(void)
 	for(unsigned sel = 0 ; sel < 2 ; sel++)
 	{
 		spi0->bytes.sel = sel;
+		// send some clocks without CS, because that's what the datasheet says
+		spi_cs_mode(SPI_MODE_NONE);
+		spi_transfer(0x5A);
+		spi_transfer(0xA5);
+		spi_transfer(0x81);
+		spi_transfer(0x18);
+
 		spi_command(0x66, NULL, 0);
 		spi_command(0x99, NULL, 0);
 
@@ -510,6 +579,14 @@ int main(void)
 			print("---\n");
 		}
 
+		int c = getchar();
+		if (c == 'R')
+			goto reboot;
+		if (c == '0')
+			print_psram(0x000000, 32);
+		if (c == '1')
+			print_psram(0x800000, 32);
+
 		const uint32_t cmd = uspi->cmd;
 		if (cmd == last_cmd)
 			continue;
@@ -518,22 +595,10 @@ int main(void)
 		const uint32_t len = uspi->len;
 		const uint8_t sr = uspi->sr;
 		
-
-		print_hex(cmd >> 8, 6);
-		print_char(' ');
-		print_hex(cmd & 0xFF, 2);
-		print_char(' ');
-		print_hex(addr, 6);
-		print_char(' ');
-		print_hex(len, 4);
-		print_char(' ');
-		print_hex(sr, 2);
-		print_char('\n');
-
 		last_cmd = cmd;
 		last_report = now;
 
-		spi_flash(cmd & 0xFF, addr, len, sr);
+		spi_flash(cmd, addr, len, sr);
 
 		// ensure that no SPI device is enabled
 		spi_cs_mode(SPI_MODE_NONE);
