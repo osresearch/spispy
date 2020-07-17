@@ -1,6 +1,13 @@
+DEVICE-ulx3s ?= 25k
+IDCODE ?= 0x21111043 # ecp5-12f
+FOOTPRINT-ulx3s ?= CABGA381
+PIN_SRC-ulx3s ?= ../verilog/ulx3s_v20.lpf
+FPGA-ulx3s ?= ecp5
+
 DEVICE-upduino ?= up5k
 FOOTPRINT-upduino ?= sg48
 PIN_SRC-upduino ?= upduino_v2.pcf
+FPGA-upduino ?= ice40
 
 DEVICE-icebreaker ?= up5k
 FOOTPRINT-icebreaker ?= sg48
@@ -15,14 +22,16 @@ DEVICE-tomu := up5k
 FOOTPRINT-tomu := uwg30
 PIN_SRC-tomu := tomu.pcf
 
-USB_DEV ?= 1-4:1.0
-BOARD ?= upduino
+USB_DEV ?= 1-3:1.0
+#BOARD ?= upduino
+BOARD ?= ulx3s
 DEVICE := $(DEVICE-$(BOARD))
 FOOTPRINT := $(FOOTPRINT-$(BOARD))
 PIN_SRC := $(PIN_SRC-$(BOARD))
+FPGA := $(or $(FPGA-$(BOARD)),ice40)
 
 
-PNR ?= $(ICEPATH)nextpnr-ice40
+PNR ?= $(ICEPATH)nextpnr-$(FPGA)
 .SECONDARY:
 
 %.flash: %.bin
@@ -38,34 +47,36 @@ PNR ?= $(ICEPATH)nextpnr-ice40
 %.json: %.v
 	$(ICEPATH)yosys \
 		-q \
+		-D"FPGA_$(FPGA)" \
 		-p 'read_verilog $<' \
-		-p 'synth_ice40 -top top -json $@' \
+		-p 'synth_$(FPGA) -top top -json $@' \
 		-E .$(basename $@).d \
 
-%.asc: $(PIN_SRC) %.json
+%.asc: %.json # $(PIN_SRC)
 	$(PNR) \
 		--$(DEVICE) \
+		--json $< \
+		--textcfg $@ \
 		--package $(FOOTPRINT) \
-		--asc $@ \
-		--pcf $(PIN_SRC) \
-		--json $(basename $@).json \
+		--lpf $(PIN_SRC) \
 		--timing-allow-fail \
 
 %.gui: %.json
 	$(PNR) --gui --$(DEVICE) --pcf $(PIN_SRC) --json $<
 
-%.bin: %.asc
+%.bit: %.asc
 	cp $< $<.new
 	for bram in $(filter %.hex,$^); do \
 		echo "Replacing $$bram" ; \
-		$(ICEPATH)icebram \
-			$$(basename $$bram .hex).syn.hex \
-			$$bram \
-			< $<.new > $<.tmp \
+		$(ICEPATH)ecpbram \
+			--from $$(basename $$bram .hex).syn.hex \
+			--to $$bram \
+			--input $<.new \
+			--output $<.tmp \
 		|| exit 1 ; \
 		mv $<.tmp $<.new ; \
 	done
-	$(ICEPATH)icepack $<.new $@
+	$(ICEPATH)ecppack --idcode $(IDCODE) $<.new $@
 
 # Generate a desired MHz pll
 pll_%.v:

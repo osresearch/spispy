@@ -6,7 +6,7 @@ TEST-y += test-spi_controller
 TEST-y += test-spi_controller_iomem
 TEST-y += test-reset
 
-top.bin: firmware.hex
+top.bit: firmware.hex
 
 include Makefile.icestorm
 

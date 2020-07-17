@@ -3,26 +3,35 @@
  *
  *               +------+
  *  !CS       ---| o    |----  +V
- *   DO / D1  ---|      |---- !RST / D3 
+ *   DO / D1  ---|      |----  D3 / !RST
  *  !WP / D2  ---|      |----  CLK
- *  GND       ---|      |----  DI / D0
+ *  GND       ---|      |----  D0 / DI
  *               +------+
 // teensy3 pins
 #define SPI_CS   10 // white or yellow
+#define SPI_MOSI 11 // blue or purple -- to DI / D0
+#define SPI_MISO 12 // brown --- from DO / D1
 #define SPI_SCLK 13 // green
-#define SPI_MOSI 11 // blue or purple
-#define SPI_MISO 12 // brown
  */
 `default_nettype none
 
-`define PICOSOC_MEM ice40up5k_spram
-`define PICOSOC_BRAM "firmware.syn.hex"
 
 
 `include "util.v"
 `include "uspispy.v"
+
+`ifdef FPGA_ice40
 `include "pll_16.v"
+`define PICOSOC_MEM ice40up5k_spram
+`define PICOSOC_BRAM "firmware.syn.hex"
+`elsif FPGA_ecp5
+`include "pll_30.v"
+`define PICOSOC_MEM picosoc_mem
+`define PICOSOC_BRAM "firmware.syn.hex"
+`endif
+
 `include "picorv32/ice40up5k_spram.v"
+//`include "picorv32/ecp5_spram.v"
 `include "picorv32/simpleuart.v"
 `include "picorv32/picosoc.v"
 `include "picorv32/picorv32.v"
@@ -30,49 +39,69 @@
 `include "spi_controller_iomem.v"
 
 module top(
+`ifdef FPGA_ice40
 	output serial_txd,
 	input serial_rxd,
 	output fpga_spi_cs,
 	output led_r,
 	output led_g,
 	output led_b,
-	// left side GPIO
-	inout gpio_23,
-	inout gpio_25, // D0 / DI
-	inout gpio_26, // CLK
-	inout gpio_27, // D3
-	inout gpio_32, // D2
-	//inout gpio_35,
-	//inout gpio_31, // !CS
-	inout gpio_37, // D1 / DO
-	inout gpio_34, // !CS ram0
-	inout gpio_43, // D1 ram0
-	inout gpio_36, // D2 ram0
-	inout gpio_42, // !CS ram1
-	inout gpio_38, // D1 ram1
-	inout gpio_28, // D2 ram1
 
-	// right side GPIO
+	// left side GPIO, all in bank 0
+	// used for the DIO busses
+	inout gpio_23, // SPI dio[0]
+	inout gpio_25, // SPI dio[1]
+	inout gpio_26, // SPI dio[2]
+	inout gpio_27, // SPI dio[3]
+	inout gpio_32, // RAM0 dio[0]
+	//inout gpio_35, // DO NOT USE, special PLL interaction
+	inout gpio_31, // not used, broken?
+	inout gpio_37, // RAM0 dio[1] / DO
+	inout gpio_34, // RAM0 dio[2]
+	inout gpio_43, // RAM0 dio[3]
+	inout gpio_36, // RAM1 dio[0]
+	inout gpio_42, // RAM1 dio[1]
+	inout gpio_38, // RAM1 dio[2]
+	inout gpio_28, // RAM1 dio[3]
+
+	// right side GPIO, bank 1
+	// need to share VCC with FPGA flash, so can't be powered by SPI bus
+	// could be used for another PSRAM used for logging.
 	inout gpio_12,
 	inout gpio_21,
 	inout gpio_13,
 	inout gpio_19,
-	inout gpio_18, // !CS
+	input gpio_18,
 	inout gpio_11,
 	inout gpio_9,
 	inout gpio_6,
-	inout gpio_44,
-	inout gpio_4,
-	inout gpio_3, // D3 ram0
-	inout gpio_48, // clk ram0
-	inout gpio_45, // D0 ram0
-	inout gpio_47, // D3 ram1
-	inout gpio_46, // clk ram1
-	inout gpio_2, // D0 ram1
+
+	// right side GPIO, bank 2
+	// used for SPI_CLK and !CS pins
+	inout gpio_44, // SPI clk (global buf 6 for high-fanout)
+	inout gpio_4, // SPI !CS
+	inout gpio_3, // RAM0 !CS
+	inout gpio_48, // RAM0 CLK (to be adjacent to spi clk)
+	inout gpio_45, // RAM1 CLK (to be adjacent to spi clk)
+	inout gpio_47, // RAM1 !CS
+	inout gpio_46, // unused
+	inout gpio_2, // unused
+
+`elsif FPGA_ecp5
+	input clk_25mhz,
+	output [7:0] led,
+	inout [27:0] gp,
+	inout [27:0] gn,
+	input ftdi_txd,
+	output ftdi_rxd
+`endif
 );
+
+`ifdef FPGA_ice40
 	assign fpga_spi_cs = 1;
 	parameter integer MEM_WORDS = 32768;
 
+	// ice40 has a 48 MHz onboard oscillator
 	wire clk_48mhz;
 	SB_HFOSC u_hfosc(
 		.CLKHFPU(1),
@@ -80,38 +109,72 @@ module top(
 		.CLKHF(clk_48mhz),
 	);
 
-	wire clk_16mhz;
 	wire locked;
+	wire clk_16mhz;
 	pll_16 pll(clk_48mhz, clk_16mhz, locked);
+	wire clk = clk_16mhz;
+
+	assign led_b = serial_rxd;
+	assign led_g = spi_cs_in; // serial_txd;
+	assign led_r = !gpio[7]; // spi_cs_in; // negative logic
+
+	// physical pins for the three SPI ports
+	// the clocks are all in the same gpio bank
+	// the dio pins are all in the same bank
+	wire spi_clk_pin = gpio_44; // global buf 6
+	wire spi_cs_pin = gpio_4;
+	wire [3:0] spi_data_pins = { gpio_27, gpio_26, gpio_25, gpio_23 };
+
+	wire ram0_clk_pin = gpio_48;
+	wire ram0_cs_pin = gpio_3;
+	wire [3:0] ram0_data_pins = { gpio_43, gpio_34, gpio_37, gpio_32 };
+
+	wire ram1_clk_pin = gpio_45;
+	wire ram1_cs_pin = gpio_47;
+	wire [3:0] ram1_data_pins = { gpio_28, gpio_38, gpio_42, gpio_36 };
+
+`elsif FPGA_ecp5
+	// the sdram could be used for this instead, but for now EBR it is
+	parameter integer MEM_WORDS = 16384;
+
+	// 25 MHz input clock from outside
+	wire locked;
+	wire clk_30mhz;
+	pll_30 pll(clk_25mhz, clk_30mhz, locked);
+	wire clk = clk_25mhz;
+
+	assign led[0] = serial_rxd;
+	assign led[1] = serial_txd;
+	wire serial_rxd = ftdi_txd;
+	wire serial_txd = ftdi_rxd;
+
+	// physical pins for the three SPI ports
+	wire spi_clk_pin = gp[0];
+	wire spi_cs_pin = gp[1];
+	wire [3:0] spi_data_pins = gp[5:2];
+
+	wire ram0_clk_pin = gp[6];
+	wire ram0_cs_pin = gp[7];
+	wire [3:0] ram0_data_pins = gp[11:8];
+
+	wire ram1_clk_pin = gp[12];
+	wire ram1_cs_pin = gp[13];
+	wire [3:0] ram1_data_pins = gp[17:14];
+
+`endif
 
 	reg [5:0] reset_cnt = 0;
 	wire resetn = &reset_cnt;
 	wire reset = !resetn;
 
-	wire clk = clk_16mhz;
-	always @(posedge clk_16mhz) begin
+	always @(posedge clk) begin
+/*
 		if (!locked)
 			reset_cnt <= 0;
 		else
+*/
 			reset_cnt <= reset_cnt + !resetn;
 	end
-
-	assign led_b = serial_rxd;
-	assign led_g = !spi_cmd_strobe; // serial_txd;
-	assign led_r = !gpio[7]; // spi_cs_in; // negative logic
-
-	// physical pins for the three SPI ports
-	wire spi_clk_pin = gpio_26;
-	wire spi_cs_pin = gpio_18;
-	wire [3:0] spi_data_pins = { gpio_27, gpio_32, gpio_37, gpio_25 };
-
-	wire ram0_clk_pin = gpio_48;
-	wire ram0_cs_pin = gpio_34;
-	wire [3:0] ram0_data_pins = { gpio_3, gpio_36, gpio_43, gpio_45 };
-
-	wire ram1_clk_pin = gpio_46;
-	wire ram1_cs_pin = gpio_42;
-	wire [3:0] ram1_data_pins = { gpio_47, gpio_28, gpio_38, gpio_2 };
 
 	// bidirectional pins for the spi bus data
 	wire [3:0] spi_di;
@@ -124,33 +187,25 @@ module top(
 	wire spi_clk_out = 0;
 	wire spi_clk_enable = 0; // always input for now
 
-	SB_IO #(
-		.PIN_TYPE(6'b1010_01), // tristatable outputs
-		//.PULLUP(4'b1111),
-	) spi_data_buffer[3:0] (
-		.OUTPUT_ENABLE(spi_do_enable),
-		.PACKAGE_PIN(spi_data_pins),
-		.D_IN_0(spi_di),
-		.D_OUT_0(spi_do),
+	buffer #(.WIDTH(4)) spi_data_buffer(
+		.enable(spi_do_enable),
+		.pins(spi_data_pins),
+		.in(spi_di),
+		.out(spi_do)
 	);
 
-	SB_IO #(
-		.PIN_TYPE(6'b1010_01), // tristatable outputs
-		//.PULLUP(1'b1),
-	) spi_cs_buffer (
-		.OUTPUT_ENABLE(spi_cs_enable),
-		.PACKAGE_PIN(spi_cs_pin),
-		.D_IN_0(spi_cs_in),
-		.D_OUT_0(spi_cs_out),
+	buffer #(.PULLUP(1)) spi_cs_buffer (
+		.enable(spi_cs_enable),
+		.pins(spi_cs_pin),
+		.in(spi_cs_in),
+		.out(spi_cs_out),
 	);
 
-	SB_IO #(
-		.PIN_TYPE(6'b1010_01),
-	) spi_clk_buffer(
-		.PACKAGE_PIN(spi_clk_pin),
-		.OUTPUT_ENABLE(spi_clk_enable),
-		.D_IN_0(spi_clk_in),
-		.D_OUT_0(spi_clk_out),
+	buffer spi_clk_buffer(
+		.pins(spi_clk_pin),
+		.enable(spi_clk_enable),
+		.in(spi_clk_in),
+		.out(spi_clk_out),
 	);
 
 
@@ -158,48 +213,40 @@ module top(
 	wire [3:0] ram0_di;
 	reg [3:0] ram0_do;
 	reg [3:0] ram0_do_enable;
-	SB_IO #(
-		.PIN_TYPE(6'b1010_01) // tristatable outputs
-	) ram0_data_buffer[3:0] (
-		.OUTPUT_ENABLE(ram0_do_enable),
-		.PACKAGE_PIN(ram0_data_pins),
-		.D_IN_0(ram0_di),
-		.D_OUT_0(ram0_do),
+	buffer #(.WIDTH(4)) ram0_data_buffer(
+		.enable(ram0_do_enable),
+		.pins(ram0_data_pins),
+		.in(ram0_di),
+		.out(ram0_do),
 	);
 
 	// ram0 cs and clk are always output
 	reg ram0_cs_out;
 	reg ram0_clk_out;
-	SB_IO #(
-		.PIN_TYPE(6'b1010_01) // tristatable outputs
-	) ram0_cs_buffer[1:0] (
-		.OUTPUT_ENABLE(2'b11),
-		.PACKAGE_PIN({ram0_cs_pin, ram0_clk_pin}),
-		.D_OUT_0({ram0_cs_out, ram0_clk_out}),
+	buffer #(.WIDTH(2)) ram0_cs_buffer(
+		.enable(2'b11),
+		.pins({ram0_cs_pin, ram0_clk_pin}),
+		.out({ram0_cs_out, ram0_clk_out}),
 	);
 
 	// bidirectional pins for the ram1 data
 	wire [3:0] ram1_di;
 	reg [3:0] ram1_do;
 	reg [3:0] ram1_do_enable;
-	SB_IO #(
-		.PIN_TYPE(6'b1010_01) // tristatable outputs
-	) ram1_data_buffer[3:0] (
-		.OUTPUT_ENABLE(ram1_do_enable),
-		.PACKAGE_PIN(ram1_data_pins),
-		.D_IN_0(ram1_di),
-		.D_OUT_0(ram1_do),
+	buffer #(.WIDTH(4)) ram1_data_buffer(
+		.enable(ram1_do_enable),
+		.pins(ram1_data_pins),
+		.in(ram1_di),
+		.out(ram1_do),
 	);
 
 	// ram1 cs and clk are always output
 	reg ram1_cs_out;
 	reg ram1_clk_out;
-	SB_IO #(
-		.PIN_TYPE(6'b1010_01) // tristatable outputs
-	) ram1_cs_buffer[1:0] (
-		.OUTPUT_ENABLE(2'b11),
-		.PACKAGE_PIN({ram1_cs_pin, ram1_clk_pin}),
-		.D_OUT_0({ram1_cs_out, ram1_clk_out}),
+	buffer #(.WIDTH(2)) ram1_cs_buffer(
+		.enable(2'b11),
+		.pins({ram1_cs_pin, ram1_clk_pin}),
+		.out({ram1_cs_out, ram1_clk_out}),
 	);
 
 
@@ -346,7 +393,7 @@ module top(
 
 	spi_controller_iomem spi_iomem(
 		.clk(clk),
-		.reset(!resetn),
+		.reset(reset),
 
 		// physical
 		.spi_data_in(spi_controller_di),
@@ -465,3 +512,35 @@ module top(
 	);
 endmodule
 
+module buffer(
+	input [WIDTH-1:0] enable,
+	inout [WIDTH-1:0] pins,
+	output [WIDTH-1:0] in,
+	input [WIDTH-1:0] out
+);
+	parameter WIDTH = 1;
+	parameter PULLUP = 0;
+
+`ifdef FPGA_ice40
+	SB_IO #(
+		.PIN_TYPE(6'b1010_01), // tristatable outputs
+		.PULLUP(PULLUP)
+	) buffer[WIDTH-1:0](
+		.OUTPUT_ENABLE(enable),
+		.PACKAGE_PIN(pins),
+		.D_IN_0(in),
+		.D_OUT_0(out),
+	);
+`elsif FPGA_ecp5
+	TRELLIS_IO #(
+		.DIR("BIDIR")
+	) buffer[WIDTH-1:0](
+		.T(~enable),
+		.B(pins),
+		.I(out),
+		.O(in)
+	);
+`else
+`error "unknown fpga"
+`endif
+endmodule
