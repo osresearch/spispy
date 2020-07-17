@@ -80,8 +80,8 @@ module uspispy(
 	reg ram1_enabled = 1;
 	assign ram0_cs = spi_cs_in || !ram0_enabled; // negative logic
 	assign ram1_cs = spi_cs_in || !ram1_enabled; // negative logic
-	assign ram0_clk = spi_clk;
-	assign ram1_clk = spi_clk;
+	assign ram0_clk = spi_cs_in ? 0 : spi_clk;
+	assign ram1_clk = spi_cs_in ? 0 : spi_clk;
 
 	// spi data commands
 	localparam SPI_CMD_RDID = 8'h9F;
@@ -97,8 +97,8 @@ module uspispy(
 	reg [3:0] spi_do_enable = 0;
 	assign ram0_do_enable = 4'b0001; // DI pin from the PCH is the DO pin TO ram0
 	assign ram1_do_enable = 4'b0001; // DI pin from the PCH is the DO pin TO ram1
-	assign ram0_do = spi_di;
-	assign ram1_do = spi_di;
+	assign ram0_do = spi_cs_in ? 4'b000 : spi_di;
+	assign ram1_do = spi_cs_in ? 4'b000 : spi_di;
 
 	wire [7:0] spi_byte_raw;
 	reg spi_got_cmd;
